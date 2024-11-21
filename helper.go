@@ -242,3 +242,13 @@ func MarshalWithRegistry(val interface{}) ([]byte, error) {
 
 	return buf.Bytes(), nil
 }
+
+func UnmarshalWithRegistry(data []byte, val interface{}) error {
+	dec, err := bson.NewDecoder(bsonrw.NewBSONDocumentReader(data))
+	if err != nil {
+		panic(err)
+	}
+	dec.SetRegistry(MongoRegistry)
+
+	return dec.Decode(val)
+}
