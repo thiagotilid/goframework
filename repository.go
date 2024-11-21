@@ -68,8 +68,8 @@ func appendTenantToFilterAgg(ctx context.Context, filterAggregator map[string][]
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
 			filterAggregator["$and"] = append(filterAggregator["$and"], map[string]interface{}{"$or": bson.A{
-				bson.D{{"tenantId", tid}},
-				bson.D{{"tenantId", uuid.Nil}},
+				bson.M{"tenantId": tid},
+				bson.M{"tenantId": uuid.Nil},
 			},
 			})
 		}
@@ -82,7 +82,7 @@ func (r *MongoDbRepository[T]) GetAll(
 	optsFind ...*options.FindOptions) *[]T {
 
 	filterAggregator := make(map[string][]interface{})
-	filterAggregator["$and"] = append(filterAggregator["$and"], filter, bson.D{{"active", true}})
+	filterAggregator["$and"] = append(filterAggregator["$and"], filter, bson.M{"active": true})
 
 	appendTenantToFilterAgg(ctx, filterAggregator)
 	if os.Getenv("env") == "local" {
@@ -117,7 +117,7 @@ func (r *MongoDbRepository[T]) GetAllSkipTake(
 	result := &DataList[T]{}
 
 	filterAggregator := make(map[string][]interface{})
-	filterAggregator["$and"] = append(filterAggregator["$and"], filter, bson.D{{"active", true}})
+	filterAggregator["$and"] = append(filterAggregator["$and"], filter, bson.M{"active": true})
 	appendTenantToFilterAgg(ctx, filterAggregator)
 
 	opts := make([]*options.FindOptions, 0)
@@ -161,8 +161,8 @@ func appendTenantToFilter(ctx context.Context, filter map[string]interface{}) {
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
 			filter["$or"] = bson.A{
-				bson.D{{"tenantId", tid}},
-				bson.D{{"tenantId", uuid.Nil}},
+				bson.M{"tenantId": tid},
+				bson.M{"tenantId": uuid.Nil},
 			}
 			filter["active"] = true
 		}
@@ -195,7 +195,7 @@ func (r *MongoDbRepository[T]) GetFirst(
 }
 
 func (r *MongoDbRepository[T]) insertDefaultParam(ctx context.Context, entity *T) (bson.M, error) {
-	bsonMap, err := bson.MarshalWithRegistry(MongoRegistry, entity)
+	bsonMap, err := MarshalWithRegistry(entity)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func (r *MongoDbRepository[T]) insertDefaultParam(ctx context.Context, entity *T
 	if err != nil {
 		return nil, err
 	}
-	// helperContext(ctx, bsonM, map[string]string{"createdBy": XAUTHOR, "updatedBy": XAUTHOR})
+
 	if tenantid := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantid != "" {
 		if tid, err := uuid.Parse(tenantid); err == nil {
 			bsonM["tenantId"] = tid
@@ -224,7 +224,7 @@ func (r *MongoDbRepository[T]) insertDefaultParam(ctx context.Context, entity *T
 }
 
 func (r *MongoDbRepository[T]) replaceDefaultParam(ctx context.Context, old bson.M, entity *T) (bson.M, error) {
-	bsonMap, err := bson.MarshalWithRegistry(MongoRegistry, entity)
+	bsonMap, err := MarshalWithRegistry(entity)
 	if err != nil {
 		return nil, err
 	}
@@ -245,6 +245,80 @@ func (r *MongoDbRepository[T]) replaceDefaultParam(ctx context.Context, old bson
 	bsonM["active"] = old["active"]
 
 	return bsonM, nil
+}
+
+func (r *MongoDbRepository[T]) updateDefaultParam(ctx context.Context, entity interface{}) (bson.M, error) {
+	bsonMap, err := MarshalWithRegistry(entity)
+	if err != nil {
+		return nil, err
+	}
+
+	var bsonM bson.M
+	err = bson.Unmarshal(bsonMap, &bsonM)
+	if err != nil {
+		return nil, err
+	}
+
+	var history = make(map[string]interface{})
+	history["ActionAt"] = time.Now()
+	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
+	bsonM["updated"] = history
+
+	delete(bsonM, "_id")
+	delete(bsonM, "tenantId")
+	delete(bsonM, "created")
+	delete(bsonM, "active")
+
+	return bsonM, nil
+}
+
+func (r *MongoDbRepository[T]) pushDefaultParam(ctx context.Context, entity interface{}) (bson.M, error) {
+	updt := bson.M{}
+
+	bsonMap, err := MarshalWithRegistry(entity)
+	if err != nil {
+		return nil, err
+	}
+
+	var pushM bson.M
+	err = bson.Unmarshal(bsonMap, &pushM)
+	if err != nil {
+		return nil, err
+	}
+
+	updt["$push"] = pushM
+
+	var history = make(map[string]interface{})
+	history["ActionAt"] = time.Now()
+	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
+	updt["$set"] = bson.M{"updated": history}
+
+	return updt, nil
+}
+
+func (r *MongoDbRepository[T]) pullDefaultParam(ctx context.Context, entity interface{}) (bson.M, error) {
+	updt := bson.M{}
+
+	bsonMap, err := MarshalWithRegistry(entity)
+	if err != nil {
+		return nil, err
+	}
+
+	var pullM bson.M
+	err = bson.Unmarshal(bsonMap, &pullM)
+	if err != nil {
+		return nil, err
+	}
+
+	updt["$pull"] = pullM
+
+	var history = make(map[string]interface{})
+	history["ActionAt"] = time.Now()
+	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
+	historyBson := bson.M{"updated": history}
+	updt["$set"] = historyBson
+
+	return updt, nil
 }
 
 func (r *MongoDbRepository[T]) Insert(
@@ -381,23 +455,15 @@ func (r *MongoDbRepository[T]) Update(
 			filter["tenantId"] = tid
 		}
 	}
-	var setBson bson.M
-	_, obj, err := bson.MarshalValueWithRegistry(MongoRegistry, fields)
+
+	setBson, err := r.updateDefaultParam(ctx, fields)
 	if err != nil {
 		return err
 	}
-	bson.Unmarshal(obj, &setBson)
-
-	// setBson := structToBson(fields)
-	var history = make(map[string]interface{})
-	history["ActionAt"] = time.Now()
-	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
-	setBson["updated"] = history
-	delete(setBson, "_id")
 
 	if os.Getenv("env") == "local" {
-		// _, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj))
+		_, obj, err := bson.MarshalValue(fields)
+		fmt.Print(bson.Raw(obj), err)
 	}
 
 	re, err := r.collection.UpdateOne(getContext(ctx), filter, map[string]interface{}{"$set": setBson})
@@ -435,21 +501,15 @@ func (r *MongoDbRepository[T]) FindOneAndUpdate(
 			filter["tenantId"] = tid
 		}
 	}
-	var setBson bson.M
-	_, obj, err := bson.MarshalValueWithRegistry(MongoRegistry, fields)
+
+	setBson, err := r.updateDefaultParam(ctx, fields)
 	if err != nil {
 		return nil, err
 	}
-	bson.Unmarshal(obj, &setBson)
-
-	// setBson := structToBson(fields)
-	var history = make(map[string]interface{})
-	history["ActionAt"] = time.Now()
-	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
 
 	if os.Getenv("env") == "local" {
-		// _, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj))
+		_, obj, err := bson.MarshalValue(fields)
+		fmt.Print(bson.Raw(obj), err)
 	}
 
 	re := r.collection.FindOneAndUpdate(getContext(ctx),
@@ -491,23 +551,15 @@ func (r *MongoDbRepository[T]) UpdateMany(
 			filter["tenantId"] = tid
 		}
 	}
-	var setBson bson.M
-	_, obj, err := bson.MarshalValueWithRegistry(MongoRegistry, fields)
+
+	setBson, err := r.updateDefaultParam(ctx, fields)
 	if err != nil {
 		return err
 	}
-	bson.Unmarshal(obj, &setBson)
-
-	// setBson := structToBson(fields)
-	var history = make(map[string]interface{})
-	history["ActionAt"] = time.Now()
-	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
-	setBson["updated"] = history
-	delete(setBson, "_id")
 
 	if os.Getenv("env") == "local" {
-		// _, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj))
+		_, obj, err := bson.MarshalValue(fields)
+		fmt.Print(bson.Raw(obj), err)
 	}
 
 	re, err := r.collection.UpdateMany(getContext(ctx), filter, map[string]interface{}{"$set": setBson})
@@ -546,26 +598,14 @@ func (r *MongoDbRepository[T]) PushMany(
 		}
 	}
 
-	updt := map[string]interface{}{}
-
-	var setBson bson.M
-	_, obj, err := bson.MarshalValueWithRegistry(MongoRegistry, fields)
+	updt, err := r.pushDefaultParam(ctx, fields)
 	if err != nil {
 		return err
 	}
 
-	bson.Unmarshal(obj, &setBson)
-
-	updt["$push"] = setBson
-
-	var history = make(map[string]interface{})
-	history["ActionAt"] = time.Now()
-	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
-	historyBson := bson.M{"updated": history}
-	updt["$set"] = historyBson
-
 	if os.Getenv("env") == "local" {
-		fmt.Print(bson.Raw(obj))
+		_, obj, err := bson.MarshalValue(fields)
+		fmt.Print(bson.Raw(obj), err)
 	}
 
 	re, err := r.collection.UpdateMany(getContext(ctx), filter, updt)
@@ -603,26 +643,14 @@ func (r *MongoDbRepository[T]) PullMany(
 		}
 	}
 
-	updt := map[string]interface{}{}
-
-	var setBson bson.M
-	_, obj, err := bson.MarshalValueWithRegistry(MongoRegistry, fields)
+	updt, err := r.pullDefaultParam(ctx, fields)
 	if err != nil {
 		return err
 	}
 
-	bson.Unmarshal(obj, &setBson)
-
-	updt["$pull"] = setBson
-
-	var history = make(map[string]interface{})
-	history["ActionAt"] = time.Now()
-	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
-	historyBson := bson.M{"updated": history}
-	updt["$set"] = historyBson
-
 	if os.Getenv("env") == "local" {
-		fmt.Print(bson.Raw(obj))
+		_, obj, err := bson.MarshalValue(fields)
+		fmt.Print(bson.Raw(obj), err)
 	}
 
 	re, err := r.collection.UpdateMany(getContext(ctx), filter, updt)
@@ -850,21 +878,21 @@ func (r *MongoDbRepository[T]) DeleteManyForce(
 
 func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline []interface{}) (*mongo.Cursor, error) {
 
-	filter := bson.A{}
+	var filter bson.A
 
 	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
 	if tid, err := uuid.Parse(tenantId); err == nil {
 		filter = bson.A{
 			bson.D{
-				{"$match",
-					bson.D{
-						{"$or",
-							bson.A{
-								bson.D{{"tenantId", uuid.Nil}},
-								bson.D{{"tenantId", tid}},
+				{Key: "$match",
+					Value: bson.D{
+						{Key: "$or",
+							Value: bson.A{
+								bson.M{"tenantId": uuid.Nil},
+								bson.M{"tenantId": tid},
 							},
 						},
-						{"active", true},
+						{Key: "active", Value: true},
 					},
 				},
 			},
@@ -872,10 +900,8 @@ func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline []interfa
 	} else {
 		filter = bson.A{
 			bson.D{
-				{"$match",
-					bson.D{
-						{"active", true},
-					},
+				{Key: "$match",
+					Value: bson.M{"active": true},
 				},
 			},
 		}
@@ -884,7 +910,7 @@ func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline []interfa
 	filter = append(filter, pipeline...)
 
 	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValueWithRegistry(MongoRegistry, filter)
+		_, obj, err := bson.MarshalValue(filter)
 		fmt.Println(bson.Raw(obj), err)
 	}
 
@@ -893,7 +919,7 @@ func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline []interfa
 
 func (r *MongoDbRepository[T]) DefaultAggregate(ctx context.Context, filter bson.A) (*mongo.Cursor, error) {
 	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValueWithRegistry(MongoRegistry, filter)
+		_, obj, err := bson.MarshalValue(filter)
 		fmt.Println(bson.Raw(obj), err)
 	}
 
@@ -906,7 +932,7 @@ func (r *MongoDbRepository[T]) Count(ctx context.Context,
 	filterAggregator["$and"] = append(filterAggregator["$and"], filter)
 
 	appendTenantToFilterAgg(ctx, filterAggregator)
-	filterAggregator["$and"] = append(filterAggregator["$and"], bson.D{{"active", true}})
+	filterAggregator["$and"] = append(filterAggregator["$and"], bson.M{"active": true})
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filterAggregator)

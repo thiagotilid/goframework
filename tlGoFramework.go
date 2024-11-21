@@ -83,7 +83,7 @@ func AddTenant(monitoring *Monitoring, v *viper.Viper) gin.HandlerFunc {
 
 		ctx.Next()
 
-		mt.AddStack(100, fmt.Sprintf("RESULT: %s", ctx.Writer.Status()))
+		mt.AddStack(100, fmt.Sprintf("RESULT: %d", ctx.Writer.Status()))
 
 		mt.End()
 

@@ -1,9 +1,9 @@
 package goframework
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -12,6 +12,7 @@ import (
 	"github.com/golang-jwt/jwt"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/bsonrw"
 )
 
 const (
@@ -196,24 +197,6 @@ func ToContext(c context.Context) context.Context {
 	return cc
 }
 
-func structToBson(inputStruct interface{}) bson.M {
-	inputType := reflect.TypeOf(inputStruct)
-	inputValue := reflect.ValueOf(inputStruct)
-
-	output := bson.M{}
-
-	for i := 0; i < inputType.NumField(); i++ {
-		field := inputType.Field(i)
-		value := inputValue.Field(i)
-
-		if !reflect.DeepEqual(value.Interface(), reflect.Zero(field.Type).Interface()) {
-			output[strings.ToLower(field.Name)] = value.Interface()
-		}
-	}
-
-	return output
-}
-
 func GetTenantByToken(ctx *gin.Context) (uuid.UUID, error) {
 	tokenString := ctx.GetHeader("Authorization")
 
@@ -237,4 +220,25 @@ func GetTenantByToken(ctx *gin.Context) (uuid.UUID, error) {
 	} else {
 		return uuid.Nil, fmt.Errorf("Tenant not found")
 	}
+}
+
+func MarshalWithRegistry(val interface{}) ([]byte, error) {
+	buf := bytes.NewBuffer([]byte{})
+	vw, err := bsonrw.NewBSONValueWriter(buf)
+	if err != nil {
+		panic(err)
+	}
+
+	enc, err := bson.NewEncoder(vw)
+	if err != nil {
+		panic(err)
+	}
+
+	enc.SetRegistry(MongoRegistry)
+
+	if err := enc.Encode(val); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }

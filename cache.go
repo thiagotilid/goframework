@@ -37,7 +37,7 @@ func (rc *RedisCache) Get(ctx context.Context, key string, pointer interface{}) 
 	return json.Unmarshal([]byte(re), pointer)
 }
 
-func (rc *RedisCache) Set(ctx context.Context, key string, val interface{}, ttlInSeconds time.Duration) error {
+func (rc *RedisCache) Set(ctx context.Context, key string, val interface{}, ttl time.Duration) error {
 
 	b, err := json.Marshal(val)
 	if err != nil {
@@ -46,5 +46,5 @@ func (rc *RedisCache) Set(ctx context.Context, key string, val interface{}, ttlI
 
 	result := rc.client.Ping(ctx)
 	log.Println(result.Result())
-	return rc.client.Set(ctx, key, b, ttlInSeconds).Err()
+	return rc.client.Set(ctx, key, b, ttl).Err()
 }
