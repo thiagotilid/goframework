@@ -88,6 +88,120 @@ type (
 	}
 )
 
+func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka.Consumer, fn ConsumerFunc, kc *kafka.ConfigMap, kcs *KafkaConsumerSettings, done chan<- struct{}) {
+	for msg := range messages {
+		log.Printf("[Worker %d] Processando mensagem: %s", id, string(msg.Value))
+		func(cmsg *kafka.Message,
+			cconsumer *kafka.Consumer,
+			ckc *kafka.ConfigMap,
+			ckcs KafkaConsumerSettings,
+			nrapp GfAgentTelemetry,
+			cfn ConsumerFunc) {
+			defer recover_all()
+			defer cconsumer.CommitMessage(cmsg)
+			ctx := context.Background()
+			transaction := &GfSpan{}
+			if nrapp != nil {
+				ctx, transaction = k.nrapp.StartTransaction(ctx, "kafka/consumer")
+			}
+			correlation := uuid.New()
+			for _, v := range msg.Headers {
+				if v.Key == XCORRELATIONID && len(v.Value) > 0 {
+					if id, err := uuid.Parse(string(v.Value)); err == nil {
+						correlation = id
+					}
+				}
+			}
+			tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
+			kafkaCallFnWithResilence(ctx, tm, cmsg, ckc, ckcs, cfn)
+			tm.AddStack(100, "COMMITING MSG")
+			consumer.CommitMessage(msg)
+			tm.AddStack(100, "COMMIT SUCCESSFULLY")
+
+			content := &map[string]interface{}{}
+			if err := json.Unmarshal(msg.Value, content); err == nil {
+				tm.AddContent(content)
+			} else {
+				tm.AddContent(msg.Value)
+			}
+
+			tm.End()
+
+			if nrapp != nil {
+				transaction.End()
+			}
+			<-messages
+
+		}(msg, consumer, kc, *kcs, k.nrapp, fn)
+	}
+	done <- struct{}{}
+}
+
+func (k *GoKafka) ConsumerWithWorker(topic string,
+	fn ConsumerFunc,
+	cfg ConsumerMultiRoutineSettings) {
+	messages := make(chan *kafka.Message, 100)
+	done := make(chan struct{}, cfg.Routines)
+	go func(topic string) {
+		kcs := &KafkaConsumerSettings{
+			Topic:           topic,
+			AutoOffsetReset: cfg.AutoOffsetReset,
+			Retries:         uint16(cfg.Retries),
+		}
+		kc := &kafka.ConfigMap{
+			"bootstrap.servers":             k.server,
+			"group.id":                      k.groupId,
+			"auto.offset.reset":             kcs.AutoOffsetReset,
+			"partition.assignment.strategy": "cooperative-sticky",
+			"enable.auto.commit":            false,
+		}
+		if len(k.securityprotocol) > 0 {
+			kc.SetKey("security.protocol", k.securityprotocol)
+		}
+		if len(k.saslmechanism) > 0 {
+			kc.SetKey("sasl.mechanism", k.saslmechanism)
+		}
+		if len(k.saslusername) > 0 {
+			kc.SetKey("sasl.username", k.saslusername)
+		}
+		if len(k.saslpassword) > 0 {
+			kc.SetKey("sasl.password", k.saslpassword)
+		}
+		fmt.Fprintf(os.Stdout,
+			"%% Start consumer %s \n",
+			k.groupId)
+		CreateKafkaTopic(context.Background(), kc, &TopicConfiguration{
+			Topic:             topic,
+			NumPartitions:     cfg.Numpartitions,
+			ReplicationFactor: cfg.ReplicationFactor,
+		})
+		consumer, err := kafka.NewConsumer(kc)
+		if err != nil {
+			log.Fatalln(err.Error())
+			panic(err)
+		}
+		err = consumer.SubscribeTopics([]string{kcs.Topic}, rebalanceCallback)
+		if err != nil {
+			log.Fatalln(err.Error())
+			panic(err)
+		}
+
+		for i := 0; i < cfg.Routines; i++ {
+			go k.worker(i, messages, consumer, fn, kc, kcs, done)
+		}
+
+		for {
+			msg, err := consumer.ReadMessage(-1)
+			if err != nil {
+				log.Println(err.Error())
+				continue
+			}
+			messages <- msg
+		}
+	}(topic)
+
+}
+
 func (k *GoKafka) ConsumerMultiRoutine(
 	topic string,
 	fn ConsumerFunc,
