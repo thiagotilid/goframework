@@ -7,7 +7,7 @@ import (
 
 type (
 	ICache interface {
-		Set(ctx context.Context, key string, val interface{}, ttlIsSeconds time.Duration) error
+		Set(ctx context.Context, key string, val interface{}, ttl time.Duration) error
 		Get(ctx context.Context, key string, pointer interface{}) error
 	}
 )
