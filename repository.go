@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -35,13 +36,14 @@ type Permission struct {
 }
 
 type MongoDbRepository[T interface{}] struct {
-	db         *mongo.Database
-	collection *mongo.Collection
-	dataList   *DataList[T]
-	monitoring *Monitoring
-	sourceName string
-	readers    map[string]Permission
-	editors    []string
+	db            *mongo.Database
+	collection    *mongo.Collection
+	dataList      *DataList[T]
+	monitoring    *Monitoring
+	sourceName    string
+	readers       map[string]Permission
+	removereaders []string
+	editors       []string
 }
 
 func NewMongoDbRepository[T interface{}](
@@ -59,13 +61,14 @@ func NewMongoDbRepository[T interface{}](
 	}
 
 	return &MongoDbRepository[T]{
-		db:         db,
-		collection: coll,
-		dataList:   &DataList[T]{},
-		monitoring: monitoring,
-		sourceName: sourcename,
-		readers:    make(map[string]Permission),
-		editors:    make([]string, 0),
+		db:            db,
+		collection:    coll,
+		dataList:      &DataList[T]{},
+		monitoring:    monitoring,
+		sourceName:    sourcename,
+		readers:       make(map[string]Permission),
+		removereaders: make([]string, 0),
+		editors:       make([]string, 0),
 	}
 }
 
@@ -73,6 +76,10 @@ func (r *MongoDbRepository[T]) AddReaders(permission Permission) {
 	if _, ok := r.readers[permission.ResourceId.String()]; !ok {
 		r.readers[permission.ResourceId.String()] = permission
 	}
+}
+
+func (r *MongoDbRepository[T]) RemoveReaders(resourceType string) {
+	r.removereaders = append(r.removereaders, resourceType)
 }
 
 func (r *MongoDbRepository[T]) AddEditors(resourceType string) {
@@ -99,6 +106,43 @@ func (r *MongoDbRepository[T]) appendTenantToFilterAgg(ctx context.Context, filt
 			}
 
 			filterAggregator["$and"] = append(filterAggregator["$and"], map[string]interface{}{"$or": f})
+		}
+	}
+}
+
+func (r *MongoDbRepository[T]) appendTenantToFilter(ctx context.Context, filter map[string]interface{}) {
+	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
+		if tid, err := uuid.Parse(tenantId); err == nil {
+
+			resourceIds := []uuid.UUID{tid}
+			for _, permission := range r.readers {
+				resourceIds = append(resourceIds, permission.ResourceId)
+			}
+
+			filter["$or"] = bson.A{
+				bson.M{"tenantId": tid},
+				bson.M{"tenantId": uuid.Nil},
+				bson.M{"permissions.resourceId": bson.M{"$in": resourceIds}},
+			}
+			filter["active"] = true
+		}
+	}
+}
+
+func (r *MongoDbRepository[T]) appendTenantToFilterWithoutNil(ctx context.Context, filter map[string]interface{}) {
+	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
+		if tid, err := uuid.Parse(tenantId); err == nil {
+
+			resourceIds := []uuid.UUID{tid}
+			for _, permission := range r.readers {
+				resourceIds = append(resourceIds, permission.ResourceId)
+			}
+
+			filter["$or"] = bson.A{
+				bson.M{"tenantId": tid},
+				bson.M{"permissions.resourceId": bson.M{"$in": resourceIds}},
+			}
+			filter["active"] = true
 		}
 	}
 }
@@ -184,25 +228,6 @@ func (r *MongoDbRepository[T]) GetAllSkipTake(
 	return result
 }
 
-func (r *MongoDbRepository[T]) appendTenantToFilter(ctx context.Context, filter map[string]interface{}) {
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-
-			resourceIds := []uuid.UUID{tid}
-			for _, permission := range r.readers {
-				resourceIds = append(resourceIds, permission.ResourceId)
-			}
-
-			filter["$or"] = bson.A{
-				bson.M{"tenantId": tid},
-				bson.M{"tenantId": uuid.Nil},
-				bson.M{"permissions.resourceId": bson.M{"$in": resourceIds}},
-			}
-			filter["active"] = true
-		}
-	}
-}
-
 func (r *MongoDbRepository[T]) GetFirst(
 	ctx context.Context,
 	filter map[string]interface{}) *T {
@@ -283,8 +308,56 @@ func (r *MongoDbRepository[T]) replaceDefaultParam(ctx context.Context, old bson
 	bsonM["active"] = old["active"]
 
 	if old["permissions"] != nil {
-		bsonM["permissions"] = old["permissions"]
+		if len(r.removereaders) > 0 {
+			newpermission := bson.A{}
+			if oldPermissions, ok := old["permissions"].(primitive.A); ok {
+				for _, permission := range oldPermissions {
+					if permMap, ok := permission.(map[string]interface{}); ok {
+						rm := false
+						for _, resourceType := range r.removereaders {
+							if permMap["resourceType"] == resourceType {
+								rm = true
+								break
+							}
+						}
+
+						if !rm {
+							newpermission = append(newpermission, permission)
+						}
+					}
+				}
+				old["permissions"] = newpermission
+			}
+		}
+
+		if len(r.readers) > 0 {
+			for _, reader := range r.readers {
+				add := true
+				if oldPermissions, ok := old["permissions"].(primitive.A); ok {
+					for _, permission := range oldPermissions {
+						if permMap, ok := permission.(map[string]interface{}); ok {
+							if permMap["resourceType"] == reader.ResourceType && permMap["resourceId"] == reader.ResourceId {
+								add = false
+								break
+							}
+						}
+					}
+				}
+				if add {
+					old["permissions"] = append(old["permissions"].(primitive.A), bson.M{"resourceId": reader.ResourceId, "resourceType": reader.ResourceType})
+				}
+			}
+		}
+	} else {
+		old["permissions"] = bson.A{}
+		if len(r.readers) > 0 {
+			for _, reader := range r.readers {
+				old["permissions"] = append(old["permissions"].(primitive.A), bson.M{"resourceId": reader.ResourceId, "resourceType": reader.ResourceType})
+			}
+		}
 	}
+
+	bsonM["permissions"] = old["permissions"]
 
 	return bsonM, nil
 }
@@ -455,10 +528,39 @@ func (r *MongoDbRepository[T]) Replace(
 		fmt.Print(bson.Raw(obj), err)
 	}
 
-	r.appendTenantToFilter(ctx, filter)
+	r.appendTenantToFilterWithoutNil(ctx, filter)
 
 	var el bson.M
 	err := r.collection.FindOne(getContext(ctx), filter).Decode(&el)
+
+	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
+		tid, err := uuid.Parse(tenantId)
+		if err != nil {
+			return err
+		}
+
+		if el["tenantId"] != tid {
+			autorized := false
+			if permissions, ok := el["permissions"].(bson.A); ok {
+				for _, permission := range permissions {
+					if permMap, ok := permission.(map[string]interface{}); ok {
+						if permMap["resourceId"] == tid {
+							for _, editor := range r.editors {
+								if permMap["resourceType"] == editor {
+									autorized = true
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if !autorized {
+				return fmt.Errorf("Unauthorized")
+			}
+		}
+	}
 
 	if err == mongo.ErrNoDocuments {
 		return r.Insert(ctx, entity)
