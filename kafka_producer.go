@@ -107,6 +107,9 @@ func (kp *KafkaProducer[T]) PublishWithKey(ctx context.Context, key []byte, msgs
 			XAUTHORID,
 			XCORRELATIONID,
 			XCREATEDAT,
+			XREADERS,
+			XNOTREADERS,
+			XEDITORS,
 		})
 
 	for _, m := range msgs {
@@ -174,6 +177,9 @@ func (kp *KafkaProducer[T]) Publish(ctx context.Context, msgs ...*T) error {
 			XAUTHORID,
 			XCORRELATIONID,
 			XCREATEDAT,
+			XREADERS,
+			XNOTREADERS,
+			XEDITORS,
 		})
 
 	tracing := kp.k.monitoring.Start(headers.GetUuid(XCORRELATIONID), kp.k.groupId, TracingTypeProducer)

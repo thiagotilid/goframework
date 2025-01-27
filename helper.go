@@ -22,6 +22,9 @@ const (
 	XAUTHORID      string = "X-Author-Id"
 	XCORRELATIONID string = "X-Correlation-Id"
 	XCREATEDAT     string = "X-CreatedAt"
+	XREADERS       string = "X-Readers"
+	XNOTREADERS    string = "X-Not-Readers"
+	XEDITORS       string = "X-Editors"
 )
 
 func helperContext(c context.Context, filter map[string]interface{}, addfilter map[string]string) {
@@ -195,6 +198,17 @@ func ToContext(c context.Context) context.Context {
 		}
 	}
 	return cc
+}
+
+func AddToContext(c context.Context, key string, value string) {
+	switch c := c.(type) {
+	case *gin.Context:
+		c.Request.Header.Add(key, value)
+	case *ConsumerContext:
+		c.Msg.Headers = append(c.Msg.Headers, kafka.Header{Key: key, Value: []byte(value)})
+	default:
+		c = context.WithValue(c, key, value)
+	}
 }
 
 func GetTenantByToken(ctx *gin.Context) (uuid.UUID, error) {
