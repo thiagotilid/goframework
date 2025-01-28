@@ -86,7 +86,7 @@ func kafkaCallFnWithResilence(
 			kafkaCallFnWithResilence(ctx, tm, msg, kcm, kcs, fn)
 			return
 		}
-		kafkaSendToDlq(cctx, tm, &kcs, kcm, msg, err, debug.Stack())
+		kafkaSendToDlq(cctx, tm, kcm, msg, err, debug.Stack())
 		tm.AddStack(500, "CONSUMER ERROR.")
 	})
 	tm.AddStack(100, "CONSUMING...")
@@ -104,7 +104,6 @@ type consumerError struct {
 func kafkaSendToDlq(
 	ctx context.Context,
 	tm *TracingMonitor,
-	kcs *KafkaConsumerSettings,
 	kcm *kafka.ConfigMap,
 	msg *kafka.Message,
 	er error,
@@ -125,9 +124,6 @@ func kafkaSendToDlq(
 	})
 
 	v, _ := kcm.Get("group.id", "")
-	if err != nil {
-		v = ""
-	}
 
 	var content map[string]interface{}
 	if err := json.Unmarshal(emsg.Value, &content); err != nil {

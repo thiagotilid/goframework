@@ -71,7 +71,7 @@ func (gt *GoTelemetry) run(gf *GoFramework) {
 		)
 
 		if err != nil {
-			log.Printf("Could not set resources: ", err)
+			log.Printf("Could not set resources: %s", err)
 		}
 
 		gf.agentTelemetry = &agentTelemetry{
