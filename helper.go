@@ -3,6 +3,7 @@ package goframework
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"fmt"
 	"strings"
 	"time"
@@ -25,6 +26,8 @@ const (
 	XREADERS       string = "X-Readers"
 	XNOTREADERS    string = "X-Not-Readers"
 	XEDITORS       string = "X-Editors"
+
+	B2B2C string = "assistancecompanies"
 )
 
 func helperContext(c context.Context, filter map[string]interface{}, addfilter map[string]string) {
@@ -265,4 +268,9 @@ func UnmarshalWithRegistry(data []byte, val interface{}) error {
 	dec.SetRegistry(MongoRegistry)
 
 	return dec.Decode(val)
+}
+
+func CnpjToGuid(s string) uuid.UUID {
+	hash := md5.Sum([]byte(s))
+	return uuid.NewMD5(uuid.NameSpaceOID, hash[:])
 }
