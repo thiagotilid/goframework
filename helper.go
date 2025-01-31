@@ -3,6 +3,7 @@ package goframework
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"fmt"
 	"strings"
 	"time"
@@ -265,4 +266,9 @@ func UnmarshalWithRegistry(data []byte, val interface{}) error {
 	dec.SetRegistry(MongoRegistry)
 
 	return dec.Decode(val)
+}
+
+func CnpjToGuid(s string) uuid.UUID {
+	hash := md5.Sum([]byte(s))
+	return uuid.NewMD5(uuid.NameSpaceOID, hash[:])
 }
