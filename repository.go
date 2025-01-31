@@ -953,6 +953,56 @@ func (r *MongoDbRepository[T]) PullMany(
 	return nil
 }
 
+func (r *MongoDbRepository[T]) SetReaders(
+	ctx context.Context,
+	filter map[string]interface{}) error {
+
+	correlation := uuid.New()
+	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
+		if id, err := uuid.Parse(ctxCorrelation); err == nil {
+			correlation = id
+		}
+	}
+
+	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
+	mt.AddStack(100, "UPDATE")
+	mt.End()
+
+	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
+		if tid, err := uuid.Parse(tenantId); err == nil {
+			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
+			editors := GetEditors(ctx)
+			if len(editors) > 0 {
+				permissions := []Permission{}
+				for _, editor := range editors {
+					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
+				}
+				filter["$or"] = append(
+					filter["$or"].(bson.A),
+					bson.M{"permissions": bson.M{"$in": permissions}})
+			}
+		}
+	}
+
+	updt := bson.M{}
+	readers := GetReaders(ctx)
+	if len(readers) > 0 {
+		updt["$addToSet"] = bson.D{{Key: "permissions", Value: bson.D{{Key: "$each", Value: readers}}}}
+	}
+
+	notreaders := GetNotReaders(ctx)
+	if len(notreaders) > 0 {
+		updt["$pullAll"] = bson.D{{Key: "permissions", Value: notreaders}}
+	}
+
+	_, err := r.collection.UpdateMany(getContext(ctx), filter, updt)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (r *MongoDbRepository[T]) Delete(
 	ctx context.Context,
 	filter map[string]interface{}) error {
