@@ -26,6 +26,8 @@ const (
 	XREADERS       string = "X-Readers"
 	XNOTREADERS    string = "X-Not-Readers"
 	XEDITORS       string = "X-Editors"
+
+	B2B2C string = "assistancecompanies"
 )
 
 func helperContext(c context.Context, filter map[string]interface{}, addfilter map[string]string) {
