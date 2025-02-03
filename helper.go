@@ -178,7 +178,7 @@ func helperContextKafka(c context.Context, addfilter []string) *kHeader {
 }
 
 func ToContext(c context.Context) context.Context {
-	listContext := []string{XTENANTID, XAUTHOR, XAUTHORID, XCORRELATIONID, TTENANTID, XCREATEDAT}
+	listContext := []string{XTENANTID, XAUTHOR, XAUTHORID, XCORRELATIONID, TTENANTID, XCREATEDAT, XREADERS}
 
 	cc := context.Background()
 	switch c := c.(type) {
