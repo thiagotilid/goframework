@@ -2,9 +2,7 @@ module github.com/thiagotilid/goframework/v3
 
 go 1.21.0
 
-retract (
-    v3.0.1
-)
+retract v3.0.1
 
 require (
 	github.com/newrelic/go-agent/v3 v3.24.0
