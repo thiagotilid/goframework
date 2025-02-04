@@ -594,6 +594,10 @@ func (r *MongoDbRepository[T]) Replace(
 	var el bson.M
 	err := r.collection.FindOne(getContext(ctx), filter).Decode(&el)
 
+	if err == mongo.ErrNoDocuments {
+		return r.Insert(ctx, entity)
+	}
+
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		tid, err := uuid.Parse(tenantId)
 		if err != nil {
