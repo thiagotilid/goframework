@@ -9,7 +9,9 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/google/uuid"
-	"github.com/newrelic/go-agent/v3/newrelic"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type (
@@ -95,10 +97,6 @@ func NewKafkaProducer[T interface{}](k *GoKafka,
 }
 
 func (kp *KafkaProducer[T]) PublishWithKey(ctx context.Context, key []byte, msgs ...*T) error {
-	txn := newrelic.FromContext(ctx)
-	nrSegment := txn.StartSegment(kp.kcs.Topic)
-	nrSegment.AddAttribute("span.kind", "client")
-	defer nrSegment.End()
 
 	headers := helperContextKafka(ctx,
 		[]string{
@@ -112,17 +110,18 @@ func (kp *KafkaProducer[T]) PublishWithKey(ctx context.Context, key []byte, msgs
 			XEDITORS,
 		})
 
+	if kp.k.telemetry {
+		g, _ := kp.kcm.Get("group.id", "")
+		_, span := otel.GetTracerProvider().Tracer("goframework.kafka.producer").Start(getContext(ctx), fmt.Sprintf("PRODUCER:%s", kp.kcs.Topic), trace.WithAttributes(attribute.KeyValue{Key: "kafka.group", Value: attribute.StringValue(g.(string))}))
+		defer span.End()
+	}
+
 	for _, m := range msgs {
-
-		tracing := kp.k.monitoring.Start(headers.GetUuid(XCORRELATIONID), kp.k.groupId, TracingTypeProducer)
-
 		data, err := json.Marshal(m)
 		if err != nil {
 			return err
 		}
 
-		tracing.AddContent(m)
-		tracing.AddStack(100, "PRODUCING...")
 		delivery_chan := make(chan kafka.Event)
 		if err = kp.kp.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
@@ -133,11 +132,9 @@ func (kp *KafkaProducer[T]) PublishWithKey(ctx context.Context, key []byte, msgs
 			Key:     key,
 			Value:   data,
 			Headers: headers.ToKafkaHeader()}, delivery_chan); err != nil {
-			tracing.AddStack(500, "ERROR TO PRODUCING: "+err.Error())
 			return err
 		}
 		<-delivery_chan
-		tracing.AddStack(200, "SUCCESSFULLY PRODUCED")
 
 		go func() {
 			for e := range kp.kp.Events() {
@@ -165,11 +162,6 @@ type baseStruct struct {
 
 func (kp *KafkaProducer[T]) Publish(ctx context.Context, msgs ...*T) error {
 
-	txn := newrelic.FromContext(ctx)
-	nrSegment := txn.StartSegment(kp.kcs.Topic)
-	nrSegment.AddAttribute("span.kind", "client")
-	defer nrSegment.End()
-
 	headers := helperContextKafka(ctx,
 		[]string{
 			XTENANTID,
@@ -182,7 +174,11 @@ func (kp *KafkaProducer[T]) Publish(ctx context.Context, msgs ...*T) error {
 			XEDITORS,
 		})
 
-	tracing := kp.k.monitoring.Start(headers.GetUuid(XCORRELATIONID), kp.k.groupId, TracingTypeProducer)
+	if kp.k.telemetry {
+		g, _ := kp.kcm.Get("group.id", "")
+		_, span := otel.GetTracerProvider().Tracer("goframework.kafka.producer").Start(getContext(ctx), fmt.Sprintf("PRODUCER:%s", kp.kcs.Topic), trace.WithAttributes(attribute.KeyValue{Key: "kafka.group", Value: attribute.StringValue(g.(string))}))
+		defer span.End()
+	}
 
 	for _, m := range msgs {
 
@@ -202,8 +198,6 @@ func (kp *KafkaProducer[T]) Publish(ctx context.Context, msgs ...*T) error {
 			}
 		}
 
-		tracing.AddContent(m)
-		tracing.AddStack(100, "PRODUCING...")
 		delivery_chan := make(chan kafka.Event)
 		if err = kp.kp.Produce(&kafka.Message{TopicPartition: kafka.TopicPartition{
 			Topic:     &kp.kcs.Topic,
@@ -213,15 +207,13 @@ func (kp *KafkaProducer[T]) Publish(ctx context.Context, msgs ...*T) error {
 			Value:   data,
 			Headers: headers.ToKafkaHeader(),
 			Key:     bId}, delivery_chan); err != nil {
-			tracing.AddStack(500, "ERROR TO PRODUCING: "+err.Error())
+
 			fmt.Println(err.Error())
 			return err
 		}
 		<-delivery_chan
-		tracing.AddStack(200, "SUCCESSFULLY PRODUCED")
-	}
 
-	tracing.End()
+	}
 
 	return nil
 }

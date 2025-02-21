@@ -2,19 +2,16 @@ package goframework
 
 import (
 	"context"
-	"log"
-	"os"
+	"errors"
+	"fmt"
+	"time"
 
-	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/event"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
-	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
-	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
 )
 
 type GoTelemetry struct {
@@ -23,80 +20,110 @@ type GoTelemetry struct {
 	ApiKey      string
 }
 
-type agentTelemetry struct {
-	tracer      trace.Tracer
-	serviceName string
-}
-
-type GfSpan struct {
-	span trace.Span
-}
-
-type GfAgentTelemetry interface {
-	gin() gin.HandlerFunc
-	mongoMonitor() *event.CommandMonitor
-	StartTransaction(ctx context.Context, spanName string, opts ...trace.SpanStartOption) (context.Context, *GfSpan)
-}
-
 func NewTelemetry(projectName string, endpoint string, apiKey string) *GoTelemetry {
 	return &GoTelemetry{Endpoint: endpoint, ApiKey: apiKey, ProjectName: projectName}
 }
 
-func (gt *GoTelemetry) run(gf *GoFramework) {
+func (gt *GoTelemetry) run(gf *GoFramework) {}
 
-	traceConnOpts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(gt.Endpoint),
-		otlptracehttp.WithHeaders(map[string]string{"api-key": gt.ApiKey}),
-	}
+func (gt *GoTelemetry) initTracer(ctx context.Context) (shutdown func(context.Context) error, err error) {
 
-	if gt.ApiKey != "" {
-		exporter, err := otlptracehttp.New(context.Background(), traceConnOpts...)
-		if err != nil {
-			log.Fatal(err)
+	var shutdownFuncs []func(context.Context) error
+
+	shutdown = func(ctx context.Context) error {
+		var err error
+		for _, fn := range shutdownFuncs {
+			err = errors.Join(err, fn(ctx))
 		}
-
-		resources, err := resource.Merge(
-			resource.Default(),
-			resource.NewWithAttributes(
-				semconv.SchemaURL,
-				semconv.ServiceName(gt.ProjectName),
-			),
-		)
-
-		otel.SetTracerProvider(
-			sdktrace.NewTracerProvider(
-				sdktrace.WithResource(resources),
-				sdktrace.WithBatcher(exporter),
-			),
-		)
-
-		if err != nil {
-			log.Printf("Could not set resources: %s", err)
-		}
-
-		gf.agentTelemetry = &agentTelemetry{
-			tracer: otel.GetTracerProvider().Tracer(
-				gt.ProjectName,
-				trace.WithInstrumentationVersion(os.Getenv("APPVERSION")),
-				trace.WithSchemaURL(semconv.SchemaURL)), serviceName: gt.ProjectName}
+		shutdownFuncs = nil
+		return err
 	}
-}
 
-func (ag *agentTelemetry) gin() gin.HandlerFunc {
-	return otelgin.Middleware(ag.serviceName)
-}
-
-func (ag *agentTelemetry) mongoMonitor() *event.CommandMonitor {
-	return otelmongo.NewMonitor()
-}
-
-func (ag *agentTelemetry) StartTransaction(ctx context.Context, spanName string, opts ...trace.SpanStartOption) (context.Context, *GfSpan) {
-	ctx, t := ag.tracer.Start(ctx, spanName, opts...)
-	return ctx, &GfSpan{span: t}
-}
-
-func (g *GfSpan) End() {
-	if g.span != nil {
-		g.span.End()
+	handleErr := func(inErr error) {
+		err = errors.Join(inErr, shutdown(ctx))
 	}
+
+	prop := newPropagator()
+	otel.SetTextMapPropagator(prop)
+
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+
+	tracerProvider, err := gt.newTraceProvider(ctx)
+	if err != nil {
+		handleErr(err)
+		return
+	}
+	shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
+	otel.SetTracerProvider(tracerProvider)
+
+	return
 }
+
+func newPropagator() propagation.TextMapPropagator {
+	return propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	)
+}
+
+func (gt *GoTelemetry) newTraceProvider(ctx context.Context) (*trace.TracerProvider, error) {
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			// the service name used to display traces in backends
+			semconv.ServiceName(gt.ProjectName),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create resource: %w", err)
+	}
+
+	// conn, err := grpc.NewClient(gt.Endpoint)
+	// if err != nil {
+	// 	return nil, fmt.Errorf("failed to create gRPC connection to collector: %w", err)
+	// }
+	// traceExporter, err := otlptracehttp.New(ctx)
+	traceExporter, err := otlptracegrpc.New(ctx)
+	// traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithHeaders(map[string]string{"api-key": gt.ApiKey}))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
+	}
+
+	traceProvider := trace.NewTracerProvider(
+		trace.WithBatcher(traceExporter, trace.WithBatchTimeout(5*time.Second)),
+		trace.WithResource(res),
+	)
+	return traceProvider, nil
+}
+
+// func (gt *GoTelemetry) GinTelemetry() gin.HandlerFunc {
+// 	return func(ctx *gin.Context) {
+// 		shutdown, err := gt.initTracer()
+// 		if err != nil {
+// 			log.Fatal(err)
+// 		}
+
+// 		defer func() {
+// 			if err := shutdown(ctx.Request.Context()); err != nil {
+// 				log.Fatal("failed to shutdown TracerProvider: %w", err)
+// 			}
+// 		}()
+
+// 		tracer := otel.Tracer("")
+// 		var span trace.Span
+// 		c, span := tracer.Start(ctx.Request.Context(), ctx.FullPath())
+
+// 		ctx.Request = ctx.Request.WithContext(c)
+// 		ctx.Next()
+
+// 		span.End()
+// 	}
+// }
+
+// func (ag *agentTelemetry) gin() gin.HandlerFunc {
+// 	return otelgin.Middleware(ag.serviceName)
+// }
+
+// func (ag *agentTelemetry) mongoMonitor() *event.CommandMonitor {
+// 	return otelmongo.NewMonitor()
+// }

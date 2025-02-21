@@ -8,6 +8,9 @@ import (
 	"runtime/debug"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type (
@@ -66,11 +69,11 @@ func recover_error(fn func(error)) {
 
 func kafkaCallFnWithResilence(
 	ctx context.Context,
-	tm *TracingMonitor,
 	msg *kafka.Message,
 	kcm *kafka.ConfigMap,
 	kcs KafkaConsumerSettings,
-	fn ConsumerFunc) {
+	fn ConsumerFunc,
+	telemetry bool) {
 
 	cctx := &ConsumerContext{
 		Context:          ctx,
@@ -78,20 +81,24 @@ func kafkaCallFnWithResilence(
 		Faulted:          kcs.Retries == 0,
 		Msg:              msg}
 
+	if telemetry {
+		g, _ := kcm.Get("group.id", "")
+		nctx, span := otel.GetTracerProvider().Tracer("goframework.kafka.consumer").Start(cctx.Context, fmt.Sprintf("CONSUMER:%s", kcs.Topic), trace.WithAttributes(attribute.KeyValue{Key: "kafka.group", Value: attribute.StringValue(g.(string))}))
+		cctx.Context = nctx
+		defer span.End()
+	}
+
 	defer recover_error(func(err error) {
 		fmt.Println(err.Error())
 		if kcs.Retries > 1 {
 			kcs.Retries--
-			tm.AddStack(500, fmt.Sprintf("CONSUMER ERROR. RETRY %d: %s", kcs.Retries, err.Error()))
-			kafkaCallFnWithResilence(ctx, tm, msg, kcm, kcs, fn)
+			kafkaCallFnWithResilence(ctx, msg, kcm, kcs, fn, telemetry)
 			return
 		}
-		kafkaSendToDlq(cctx, tm, kcm, msg, err, debug.Stack())
-		tm.AddStack(500, "CONSUMER ERROR.")
+		kafkaSendToDlq(cctx, kcm, msg, err, debug.Stack())
 	})
-	tm.AddStack(100, "CONSUMING...")
+
 	fn(cctx)
-	tm.AddStack(200, "SUCCESSFULLY CONSUMED")
 }
 
 type consumerError struct {
@@ -103,7 +110,6 @@ type consumerError struct {
 
 func kafkaSendToDlq(
 	ctx context.Context,
-	tm *TracingMonitor,
 	kcm *kafka.ConfigMap,
 	msg *kafka.Message,
 	er error,
@@ -146,9 +152,7 @@ func kafkaSendToDlq(
 
 	dlc := make(chan kafka.Event)
 	if er = p.Produce(&emsg, dlc); er != nil {
-		tm.AddStack(500, "ERROR TO PRODUCE ERROR MSG: "+er.Error())
 		panic(er)
 	}
 	<-dlc
-	tm.AddStack(100, "ERROR PRODUCED IN "+tpn)
 }

@@ -20,23 +20,30 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/dig"
 )
 
 type GoFramework struct {
-	ioc            *dig.Container
-	configuration  *viper.Viper
-	server         *gin.Engine
-	agentTelemetry GfAgentTelemetry
-	healthCheck    []func() (string, bool)
+	ioc           *dig.Container
+	configuration *viper.Viper
+	server        *gin.Engine
+	traceMonitor  *GoTelemetry
+	healthCheck   []func(ctx context.Context) (string, bool)
 }
 
 type GoFrameworkOptions interface {
 	run(gf *GoFramework)
 }
 
-func AddTenant(monitoring *Monitoring, v *viper.Viper) gin.HandlerFunc {
+func AddTenant(v *viper.Viper) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
+		tracer := otel.Tracer("")
+		_, span := tracer.Start(ctx.Request.Context(), "AddTenant")
+		// ctx.Request = ctx.Request.WithContext(c)
 
 		correlation := uuid.New()
 		if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
@@ -71,27 +78,20 @@ func AddTenant(monitoring *Monitoring, v *viper.Viper) gin.HandlerFunc {
 			}
 
 			ctx.Request.Header.Add(XTENANTID, fmt.Sprint(claims[TTENANTID]))
+			span.SetAttributes(attribute.String("tenant", fmt.Sprint(claims[TTENANTID])))
+			span.SetAttributes(attribute.String("author.Id", fmt.Sprint(claims["sub"])))
+			span.SetAttributes(attribute.String("author.name", fmt.Sprint(claims["name"])))
 		}
 
-		sourcename := v.GetString("kafka.groupid")
-		if sourcename == "" {
-			sourcename, _ = os.Hostname()
-		}
-
-		mt := monitoring.Start(correlation, sourcename, TracingTypeControler)
-		mt.AddStack(100, ctx.FullPath())
-
+		span.End()
 		ctx.Next()
-
-		mt.AddStack(100, fmt.Sprintf("RESULT: %d", ctx.Writer.Status()))
-
-		mt.End()
 
 	}
 }
 
 func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 	location, err := time.LoadLocation("UTC")
+	ctx := context.Background()
 
 	if err != nil {
 		panic(err)
@@ -103,7 +103,8 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		ioc:           dig.New(),
 		configuration: initializeViper(),
 		server:        gin.Default(),
-		healthCheck:   make([]func() (string, bool), 0),
+		healthCheck:   make([]func(context.Context) (string, bool), 0),
+		traceMonitor:  nil,
 	}
 
 	cconfig := cors.DefaultConfig()
@@ -112,25 +113,22 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 
 	corsconfig := cors.New(cconfig)
 
-	for _, opt := range opts {
-		opt.run(gf)
+	if len(opts) > 0 {
+		gf.traceMonitor = opts[0].(*GoTelemetry)
+		gf.traceMonitor.initTracer(ctx)
+		gf.server.Use(otelgin.Middleware(gf.traceMonitor.ProjectName))
 	}
 
 	gf.ioc.Provide(initializeViper)
-	gf.ioc.Provide(NewMonitoring)
 	gf.ioc.Provide(newLog)
-	gf.ioc.Provide(func() GfAgentTelemetry { return gf.agentTelemetry })
-
-	gf.ioc.Invoke(func(monitoring *Monitoring, v *viper.Viper) {
-		gf.server.Use(corsconfig, AddTenant(monitoring, v))
-	})
+	// gf.ioc.Provide(func() GfAgentTelemetry { return gf.agentTelemetry })
 
 	gf.server.GET("/health", func(ctx *gin.Context) {
 
 		list := make(map[string]bool)
 		httpCode := http.StatusOK
 		for _, item := range gf.healthCheck {
-			name, status := item()
+			name, status := item(ctx.Request.Context())
 			list[name] = status
 			if !status {
 				httpCode = http.StatusServiceUnavailable
@@ -139,9 +137,10 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		ctx.JSON(httpCode, list)
 	})
 
-	if gf.agentTelemetry != nil {
-		gf.server.Use(gf.agentTelemetry.gin())
-	}
+	gf.ioc.Invoke(func(v *viper.Viper) {
+		gf.server.Use(corsconfig, AddTenant(v))
+	})
+
 	err = gf.ioc.Provide(func() *gin.RouterGroup { return gf.server.Group("/") })
 	if err != nil {
 		log.Panic(err)
@@ -207,17 +206,17 @@ func (gf *GoFramework) Invoke(function interface{}) {
 // mongo
 func (gf *GoFramework) RegisterDbMongo(host string, user string, pass string, database string, normalize bool) {
 
-	opts := options.Client().ApplyURI(host)
-
-	if user != "" {
-		opts.SetAuth(options.Credential{Username: user, Password: pass})
-	}
-
-	if gf.agentTelemetry != nil {
-		opts = opts.SetMonitor(gf.agentTelemetry.mongoMonitor())
-	}
-
 	err := gf.ioc.Provide(func() *mongo.Database {
+		opts := options.Client().ApplyURI(host)
+
+		if user != "" {
+			opts.SetAuth(options.Credential{Username: user, Password: pass})
+		}
+
+		if gf.traceMonitor != nil {
+			opts = opts.SetMonitor(otelmongo.NewMonitor())
+		}
+
 		cli, err := newMongoClient(opts, normalize)
 		if err != nil {
 			return nil
@@ -227,20 +226,15 @@ func (gf *GoFramework) RegisterDbMongo(host string, user string, pass string, da
 
 	gf.ioc.Provide(NewMongoTransaction)
 
-	gf.healthCheck = append(gf.healthCheck, func() (string, bool) {
+	gf.healthCheck = append(gf.healthCheck, func(ctx context.Context) (string, bool) {
+		var cli *mongo.Client
+		gf.ioc.Invoke(func(db *mongo.Database) {
+			cli = db.Client()
+		})
+
 		serviceName := "MDB"
-		cli, err := newMongoClient(opts, normalize)
-		defer func() {
-			if err = cli.Disconnect(context.TODO()); err != nil {
-				panic(err)
-			}
-		}()
 
-		if err != nil {
-			return serviceName, false
-		}
-
-		if err := cli.Ping(context.Background(), readpref.Nearest()); err != nil {
+		if err := cli.Ping(ctx, readpref.Nearest()); err != nil {
 			return serviceName, false
 		}
 		return serviceName, true
@@ -271,7 +265,7 @@ func (gf *GoFramework) RegisterRedis(address string, password string, db string)
 		}
 	}
 
-	gf.healthCheck = append(gf.healthCheck, func() (string, bool) {
+	gf.healthCheck = append(gf.healthCheck, func(ctx context.Context) (string, bool) {
 		serviceName := "RDS"
 		cli := newRedisClient(opts)
 		if cli == nil {
@@ -303,12 +297,8 @@ func (gf *GoFramework) RegisterKafka(server string,
 	saslmechanism string,
 	saslusername string,
 	saslpassword string) {
-	err := gf.ioc.Provide(func(m *Monitoring) *GoKafka {
-		kc := NewKafkaConfigMap(server, groupId, securityprotocol, saslmechanism, saslusername, saslpassword, m)
-		if gf.agentTelemetry != nil {
-			kc.newMonitor(gf.agentTelemetry)
-		}
-		return kc
+	err := gf.ioc.Provide(func() *GoKafka {
+		return NewKafkaConfigMap(server, groupId, securityprotocol, saslmechanism, saslusername, saslpassword, gf.traceMonitor != nil)
 	})
 	if err != nil {
 		log.Panic(err)

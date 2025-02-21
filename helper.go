@@ -209,8 +209,6 @@ func AddToContext(c context.Context, key string, value string) {
 		c.Request.Header.Add(key, value)
 	case *ConsumerContext:
 		c.Msg.Headers = append(c.Msg.Headers, kafka.Header{Key: key, Value: []byte(value)})
-	default:
-		c = context.WithValue(c, key, value)
 	}
 }
 
@@ -226,16 +224,16 @@ func GetTenantByToken(ctx *gin.Context) (uuid.UUID, error) {
 	if claims, ok := token.Claims.(jwt.MapClaims); ok {
 		tenant := fmt.Sprint(claims[TTENANTID])
 		if tenant == "" {
-			return uuid.Nil, fmt.Errorf("Tenant not found")
+			return uuid.Nil, fmt.Errorf("tenant not found")
 		}
 		id, err := uuid.Parse(tenant)
 		if err != nil {
-			return uuid.Nil, fmt.Errorf("Tenant not found")
+			return uuid.Nil, fmt.Errorf("tenant not found")
 		}
 
 		return id, nil
 	} else {
-		return uuid.Nil, fmt.Errorf("Tenant not found")
+		return uuid.Nil, fmt.Errorf("tenant not found")
 	}
 }
 
