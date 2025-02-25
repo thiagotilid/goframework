@@ -66,7 +66,6 @@ func recover_error(fn func(error)) {
 
 func kafkaCallFnWithResilence(
 	ctx context.Context,
-	tm *TracingMonitor,
 	msg *kafka.Message,
 	kcm *kafka.ConfigMap,
 	kcs KafkaConsumerSettings,
@@ -82,16 +81,12 @@ func kafkaCallFnWithResilence(
 		fmt.Println(err.Error())
 		if kcs.Retries > 1 {
 			kcs.Retries--
-			tm.AddStack(500, fmt.Sprintf("CONSUMER ERROR. RETRY %d: %s", kcs.Retries, err.Error()))
-			kafkaCallFnWithResilence(ctx, tm, msg, kcm, kcs, fn)
+			kafkaCallFnWithResilence(ctx, msg, kcm, kcs, fn)
 			return
 		}
-		kafkaSendToDlq(cctx, tm, kcm, msg, err, debug.Stack())
-		tm.AddStack(500, "CONSUMER ERROR.")
+		kafkaSendToDlq(cctx, kcm, msg, err, debug.Stack())
 	})
-	tm.AddStack(100, "CONSUMING...")
 	fn(cctx)
-	tm.AddStack(200, "SUCCESSFULLY CONSUMED")
 }
 
 type consumerError struct {
@@ -103,7 +98,6 @@ type consumerError struct {
 
 func kafkaSendToDlq(
 	ctx context.Context,
-	tm *TracingMonitor,
 	kcm *kafka.ConfigMap,
 	msg *kafka.Message,
 	er error,
@@ -146,9 +140,7 @@ func kafkaSendToDlq(
 
 	dlc := make(chan kafka.Event)
 	if er = p.Produce(&emsg, dlc); er != nil {
-		tm.AddStack(500, "ERROR TO PRODUCE ERROR MSG: "+er.Error())
 		panic(er)
 	}
 	<-dlc
-	tm.AddStack(100, "ERROR PRODUCED IN "+tpn)
 }

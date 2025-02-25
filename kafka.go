@@ -2,7 +2,6 @@ package goframework
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -10,7 +9,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"github.com/google/uuid"
 )
 
 type (
@@ -23,7 +21,6 @@ type (
 	GoKafka struct {
 		server           string
 		groupId          string
-		monitoring       *Monitoring
 		nrapp            GfAgentTelemetry
 		securityprotocol string
 		saslmechanism    string
@@ -37,8 +34,7 @@ func NewKafkaConfigMap(connectionString string,
 	securityprotocol string,
 	saslmechanism string,
 	saslusername string,
-	saslpassword string,
-	monitoring *Monitoring) *GoKafka {
+	saslpassword string) *GoKafka {
 	return &GoKafka{
 		server:           connectionString,
 		groupId:          groupId,
@@ -46,7 +42,6 @@ func NewKafkaConfigMap(connectionString string,
 		saslmechanism:    saslmechanism,
 		saslusername:     saslusername,
 		saslpassword:     saslpassword,
-		monitoring:       monitoring,
 	}
 }
 
@@ -104,28 +99,9 @@ func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka
 			if nrapp != nil {
 				ctx, transaction = k.nrapp.StartTransaction(ctx, "kafka/consumer")
 			}
-			correlation := uuid.New()
-			for _, v := range msg.Headers {
-				if v.Key == XCORRELATIONID && len(v.Value) > 0 {
-					if id, err := uuid.Parse(string(v.Value)); err == nil {
-						correlation = id
-					}
-				}
-			}
-			tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
-			kafkaCallFnWithResilence(ctx, tm, cmsg, ckc, ckcs, cfn)
-			tm.AddStack(100, "COMMITING MSG")
+
+			kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
 			consumer.CommitMessage(msg)
-			tm.AddStack(100, "COMMIT SUCCESSFULLY")
-
-			content := &map[string]interface{}{}
-			if err := json.Unmarshal(msg.Value, content); err == nil {
-				tm.AddContent(content)
-			} else {
-				tm.AddContent(msg.Value)
-			}
-
-			tm.End()
 
 			if nrapp != nil {
 				transaction.End()
@@ -274,28 +250,9 @@ func (k *GoKafka) ConsumerMultiRoutine(
 				if nrapp != nil {
 					ctx, transaction = k.nrapp.StartTransaction(ctx, "kafka/consumer")
 				}
-				correlation := uuid.New()
-				for _, v := range msg.Headers {
-					if v.Key == XCORRELATIONID && len(v.Value) > 0 {
-						if id, err := uuid.Parse(string(v.Value)); err == nil {
-							correlation = id
-						}
-					}
-				}
-				tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
-				kafkaCallFnWithResilence(ctx, tm, cmsg, ckc, ckcs, cfn)
-				tm.AddStack(100, "COMMITING MSG")
+
+				kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
 				consumer.CommitMessage(msg)
-				tm.AddStack(100, "COMMIT SUCCESSFULLY")
-
-				content := &map[string]interface{}{}
-				if err := json.Unmarshal(msg.Value, content); err == nil {
-					tm.AddContent(content)
-				} else {
-					tm.AddContent(msg.Value)
-				}
-
-				tm.End()
 
 				if nrapp != nil {
 					transaction.End()
@@ -371,30 +328,8 @@ func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 				continue
 			}
 
-			correlation := uuid.New()
-			for _, v := range msg.Headers {
-				if v.Key == XCORRELATIONID && len(v.Value) > 0 {
-					if id, err := uuid.Parse(string(v.Value)); err == nil {
-						correlation = id
-					}
-					break
-				}
-			}
-
-			tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
-			kafkaCallFnWithResilence(ctx, tm, msg, kc, *kcs, fn)
-			tm.AddStack(100, "COMMITING MSG")
+			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
 			consumer.CommitMessage(msg)
-			tm.AddStack(100, "COMMIT SUCCESSFULLY")
-
-			content := &map[string]interface{}{}
-			if err := json.Unmarshal(msg.Value, content); err == nil {
-				tm.AddContent(content)
-			} else {
-				tm.AddContent(msg.Value)
-			}
-
-			tm.End()
 
 			if k.nrapp != nil {
 				transaction.End()
@@ -467,30 +402,8 @@ func (k *GoKafka) ConsumerWithSettings(topic string, fn ConsumerFunc, cs Consume
 				continue
 			}
 
-			correlation := uuid.New()
-			for _, v := range msg.Headers {
-				if v.Key == XCORRELATIONID && len(v.Value) > 0 {
-					if id, err := uuid.Parse(string(v.Value)); err == nil {
-						correlation = id
-					}
-					break
-				}
-			}
-
-			tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
-			kafkaCallFnWithResilence(ctx, tm, msg, kc, *kcs, fn)
-			tm.AddStack(100, "COMMITING MSG")
+			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
 			consumer.CommitMessage(msg)
-			tm.AddStack(100, "COMMIT SUCCESSFULLY")
-
-			content := &map[string]interface{}{}
-			if err := json.Unmarshal(msg.Value, content); err == nil {
-				tm.AddContent(content)
-			} else {
-				tm.AddContent(msg.Value)
-			}
-
-			tm.End()
 
 			if k.nrapp != nil {
 				transaction.End()

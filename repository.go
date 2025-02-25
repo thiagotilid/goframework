@@ -43,7 +43,6 @@ type MongoDbRepository[T interface{}] struct {
 	db         *mongo.Database
 	collection *mongo.Collection
 	dataList   *DataList[T]
-	monitoring *Monitoring
 	sourceName string
 }
 
@@ -168,7 +167,6 @@ func GetEditors(ctx context.Context) []Permission {
 
 func NewMongoDbRepository[T interface{}](
 	db *mongo.Database,
-	monitoring *Monitoring,
 	v *viper.Viper,
 ) IRepository[T] {
 	var r T
@@ -184,7 +182,6 @@ func NewMongoDbRepository[T interface{}](
 		db:         db,
 		collection: coll,
 		dataList:   &DataList[T]{},
-		monitoring: monitoring,
 		sourceName: sourcename,
 	}
 }
@@ -507,17 +504,6 @@ func (r *MongoDbRepository[T]) Insert(
 	ctx context.Context,
 	entity *T) error {
 
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(entity)
-	mt.AddStack(100, "REPLACE")
-	mt.End()
-
 	opt := options.InsertOne()
 	opt.SetBypassDocumentValidation(true)
 
@@ -537,18 +523,6 @@ func (r *MongoDbRepository[T]) Insert(
 func (r *MongoDbRepository[T]) InsertAll(
 	ctx context.Context,
 	entities *[]T) error {
-
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(entities)
-	mt.AddStack(100, "REPLACE")
-	mt.End()
 
 	var uis []interface{}
 	for _, ui := range *entities {
@@ -571,18 +545,6 @@ func (r *MongoDbRepository[T]) Replace(
 	ctx context.Context,
 	filter map[string]interface{},
 	entity *T) error {
-
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(entity)
-	mt.AddStack(100, "REPLACE")
-	mt.End()
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -677,18 +639,6 @@ func (r *MongoDbRepository[T]) Update(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(fields)
-	mt.AddStack(100, "UPDATE")
-	mt.End()
-
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
 			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
@@ -746,18 +696,6 @@ func (r *MongoDbRepository[T]) FindOneAndUpdate(
 	filter map[string]interface{},
 	fields map[string]interface{}) (*T, error) {
 
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(fields)
-	mt.AddStack(100, "UPDATE")
-	mt.End()
-
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
 			filter["tenantId"] = tid
@@ -795,18 +733,6 @@ func (r *MongoDbRepository[T]) UpdateMany(
 	ctx context.Context,
 	filter map[string]interface{},
 	fields interface{}) error {
-
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(fields)
-	mt.AddStack(100, "UPDATE")
-	mt.End()
 
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
@@ -852,18 +778,6 @@ func (r *MongoDbRepository[T]) PushMany(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(fields)
-	mt.AddStack(100, "UPDATE")
-	mt.End()
-
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
 			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
@@ -907,18 +821,6 @@ func (r *MongoDbRepository[T]) PullMany(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(fields)
-	mt.AddStack(100, "UPDATE")
-	mt.End()
-
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
 			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
@@ -960,17 +862,6 @@ func (r *MongoDbRepository[T]) PullMany(
 func (r *MongoDbRepository[T]) SetReaders(
 	ctx context.Context,
 	filter map[string]interface{}) error {
-
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddStack(100, "UPDATE")
-	mt.End()
 
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
@@ -1027,18 +918,6 @@ func (r *MongoDbRepository[T]) Delete(
 		}
 	}
 
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(filter)
-	mt.AddStack(100, "DELETE")
-	mt.End()
-
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
 		fmt.Print(bson.Raw(obj), err)
@@ -1077,18 +956,6 @@ func (r *MongoDbRepository[T]) DeleteMany(
 			}
 		}
 	}
-
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(filter)
-	mt.AddStack(100, "DELETEMANY")
-	mt.End()
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -1194,18 +1061,6 @@ func (r *MongoDbRepository[T]) DeleteForce(
 		}
 	}
 
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(filter)
-	mt.AddStack(100, "DELETEFORCE")
-	mt.End()
-
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
 		fmt.Print(bson.Raw(obj), err)
@@ -1243,18 +1098,6 @@ func (r *MongoDbRepository[T]) DeleteManyForce(
 			}
 		}
 	}
-
-	correlation := uuid.New()
-	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
-		if id, err := uuid.Parse(ctxCorrelation); err == nil {
-			correlation = id
-		}
-	}
-
-	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
-	mt.AddContent(filter)
-	mt.AddStack(100, "DELETEMANYFORCE")
-	mt.End()
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)

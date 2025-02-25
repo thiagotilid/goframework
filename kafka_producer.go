@@ -113,16 +113,10 @@ func (kp *KafkaProducer[T]) PublishWithKey(ctx context.Context, key []byte, msgs
 		})
 
 	for _, m := range msgs {
-
-		tracing := kp.k.monitoring.Start(headers.GetUuid(XCORRELATIONID), kp.k.groupId, TracingTypeProducer)
-
 		data, err := json.Marshal(m)
 		if err != nil {
 			return err
 		}
-
-		tracing.AddContent(m)
-		tracing.AddStack(100, "PRODUCING...")
 		delivery_chan := make(chan kafka.Event)
 		if err = kp.kp.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
@@ -133,11 +127,9 @@ func (kp *KafkaProducer[T]) PublishWithKey(ctx context.Context, key []byte, msgs
 			Key:     key,
 			Value:   data,
 			Headers: headers.ToKafkaHeader()}, delivery_chan); err != nil {
-			tracing.AddStack(500, "ERROR TO PRODUCING: "+err.Error())
 			return err
 		}
 		<-delivery_chan
-		tracing.AddStack(200, "SUCCESSFULLY PRODUCED")
 
 		go func() {
 			for e := range kp.kp.Events() {
@@ -182,8 +174,6 @@ func (kp *KafkaProducer[T]) Publish(ctx context.Context, msgs ...*T) error {
 			XEDITORS,
 		})
 
-	tracing := kp.k.monitoring.Start(headers.GetUuid(XCORRELATIONID), kp.k.groupId, TracingTypeProducer)
-
 	for _, m := range msgs {
 
 		data, err := json.Marshal(m)
@@ -202,8 +192,6 @@ func (kp *KafkaProducer[T]) Publish(ctx context.Context, msgs ...*T) error {
 			}
 		}
 
-		tracing.AddContent(m)
-		tracing.AddStack(100, "PRODUCING...")
 		delivery_chan := make(chan kafka.Event)
 		if err = kp.kp.Produce(&kafka.Message{TopicPartition: kafka.TopicPartition{
 			Topic:     &kp.kcs.Topic,
@@ -213,15 +201,11 @@ func (kp *KafkaProducer[T]) Publish(ctx context.Context, msgs ...*T) error {
 			Value:   data,
 			Headers: headers.ToKafkaHeader(),
 			Key:     bId}, delivery_chan); err != nil {
-			tracing.AddStack(500, "ERROR TO PRODUCING: "+err.Error())
 			fmt.Println(err.Error())
 			return err
 		}
 		<-delivery_chan
-		tracing.AddStack(200, "SUCCESSFULLY PRODUCED")
 	}
-
-	tracing.End()
 
 	return nil
 }
