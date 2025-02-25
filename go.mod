@@ -10,9 +10,16 @@ require (
 	github.com/redis/go-redis/v9 v9.0.5
 	github.com/spf13/viper v1.16.0
 	go.mongodb.org/mongo-driver v1.17.2
+	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.10.0
+	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.34.0
+	go.opentelemetry.io/otel/sdk/log v0.10.0
+	go.opentelemetry.io/otel/sdk/metric v1.34.0
 )
 
-require go.opentelemetry.io/auto/sdk v1.1.0 // indirect
+require (
+	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
+	go.opentelemetry.io/otel/log v0.10.0 // indirect
+)
 
 require (
 	github.com/bytedance/sonic v1.12.7 // indirect

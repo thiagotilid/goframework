@@ -117,6 +117,7 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		gf.traceMonitor = opts[0].(*GoTelemetry)
 		gf.traceMonitor.initTracer(ctx)
 		gf.server.Use(otelgin.Middleware(gf.traceMonitor.ProjectName))
+		gf.server.Use(Middleware())
 	}
 
 	gf.ioc.Provide(initializeViper)

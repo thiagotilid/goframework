@@ -6,12 +6,19 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.17.0"
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 type GoTelemetry struct {
@@ -49,13 +56,39 @@ func (gt *GoTelemetry) initTracer(ctx context.Context) (shutdown func(context.Co
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 
-	tracerProvider, err := gt.newTraceProvider(ctx)
+	res, err := resource.New(ctx,
+		resource.WithAttributes(
+			// the service name used to display traces in backends
+			semconv.ServiceName(gt.ProjectName),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create resource: %w", err)
+	}
+
+	tracerProvider, err := gt.newTraceProvider(ctx, res)
 	if err != nil {
 		handleErr(err)
 		return
 	}
 	shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
 	otel.SetTracerProvider(tracerProvider)
+
+	// meterProvider, err := newMeterProvider(ctx, res)
+	// if err != nil {
+	// 	handleErr(err)
+	// 	return
+	// }
+	// shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
+	// otel.SetMeterProvider(meterProvider)
+
+	// loggerProvider, err := newLoggerProvider(ctx)
+	// if err != nil {
+	// 	handleErr(err)
+	// 	return
+	// }
+	// shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
+	// global.SetLoggerProvider(loggerProvider)
 
 	return
 }
@@ -67,16 +100,7 @@ func newPropagator() propagation.TextMapPropagator {
 	)
 }
 
-func (gt *GoTelemetry) newTraceProvider(ctx context.Context) (*trace.TracerProvider, error) {
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			// the service name used to display traces in backends
-			semconv.ServiceName(gt.ProjectName),
-		),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create resource: %w", err)
-	}
+func (gt *GoTelemetry) newTraceProvider(ctx context.Context, res *resource.Resource) (*trace.TracerProvider, error) {
 
 	// conn, err := grpc.NewClient(gt.Endpoint)
 	// if err != nil {
@@ -90,40 +114,44 @@ func (gt *GoTelemetry) newTraceProvider(ctx context.Context) (*trace.TracerProvi
 	}
 
 	traceProvider := trace.NewTracerProvider(
-		trace.WithBatcher(traceExporter, trace.WithBatchTimeout(5*time.Second)),
+		trace.WithBatcher(traceExporter, trace.WithBatchTimeout(3*time.Second)),
 		trace.WithResource(res),
 	)
 	return traceProvider, nil
 }
 
-// func (gt *GoTelemetry) GinTelemetry() gin.HandlerFunc {
-// 	return func(ctx *gin.Context) {
-// 		shutdown, err := gt.initTracer()
-// 		if err != nil {
-// 			log.Fatal(err)
-// 		}
+func newMeterProvider(ctx context.Context, res *resource.Resource) (*metric.MeterProvider, error) {
+	metricExporter, err := otlpmetrichttp.New(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-// 		defer func() {
-// 			if err := shutdown(ctx.Request.Context()); err != nil {
-// 				log.Fatal("failed to shutdown TracerProvider: %w", err)
-// 			}
-// 		}()
+	meterProvider := metric.NewMeterProvider(
+		metric.WithReader(metric.NewPeriodicReader(metricExporter, metric.WithInterval(3*time.Second))),
+		metric.WithResource(res),
+	)
+	return meterProvider, nil
+}
 
-// 		tracer := otel.Tracer("")
-// 		var span trace.Span
-// 		c, span := tracer.Start(ctx.Request.Context(), ctx.FullPath())
+func newLoggerProvider(ctx context.Context, res *resource.Resource) (*log.LoggerProvider, error) {
+	logExporter, err := otlploggrpc.New(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-// 		ctx.Request = ctx.Request.WithContext(c)
-// 		ctx.Next()
+	loggerProvider := log.NewLoggerProvider(
+		log.WithProcessor(log.NewBatchProcessor(logExporter)),
+		log.WithResource(res),
+	)
+	return loggerProvider, nil
+}
 
-// 		span.End()
-// 	}
-// }
+func Middleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		span := oteltrace.SpanFromContext(c.Request.Context())
+		c.Next()
 
-// func (ag *agentTelemetry) gin() gin.HandlerFunc {
-// 	return otelgin.Middleware(ag.serviceName)
-// }
-
-// func (ag *agentTelemetry) mongoMonitor() *event.CommandMonitor {
-// 	return otelmongo.NewMonitor()
-// }
+		statuscode := attribute.Key("http.response.status_code")
+		span.SetAttributes(statuscode.String(string(c.Writer.Status())))
+	}
+}
