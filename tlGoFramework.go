@@ -24,11 +24,10 @@ import (
 )
 
 type GoFramework struct {
-	ioc            *dig.Container
-	configuration  *viper.Viper
-	server         *gin.Engine
-	agentTelemetry GfAgentTelemetry
-	healthCheck    []func() (string, bool)
+	ioc           *dig.Container
+	configuration *viper.Viper
+	server        *gin.Engine
+	healthCheck   []func() (string, bool)
 }
 
 type GoFrameworkOptions interface {
@@ -119,7 +118,6 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 	gf.ioc.Provide(initializeViper)
 	gf.ioc.Provide(NewMonitoring)
 	gf.ioc.Provide(newLog)
-	gf.ioc.Provide(func() GfAgentTelemetry { return gf.agentTelemetry })
 
 	gf.ioc.Invoke(func(monitoring *Monitoring, v *viper.Viper) {
 		gf.server.Use(corsconfig, AddTenant(monitoring, v))
@@ -139,9 +137,6 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		ctx.JSON(httpCode, list)
 	})
 
-	if gf.agentTelemetry != nil {
-		gf.server.Use(gf.agentTelemetry.gin())
-	}
 	err = gf.ioc.Provide(func() *gin.RouterGroup { return gf.server.Group("/") })
 	if err != nil {
 		log.Panic(err)
@@ -211,10 +206,6 @@ func (gf *GoFramework) RegisterDbMongo(host string, user string, pass string, da
 
 	if user != "" {
 		opts.SetAuth(options.Credential{Username: user, Password: pass})
-	}
-
-	if gf.agentTelemetry != nil {
-		opts = opts.SetMonitor(gf.agentTelemetry.mongoMonitor())
 	}
 
 	err := gf.ioc.Provide(func() *mongo.Database {
@@ -305,9 +296,6 @@ func (gf *GoFramework) RegisterKafka(server string,
 	saslpassword string) {
 	err := gf.ioc.Provide(func(m *Monitoring) *GoKafka {
 		kc := NewKafkaConfigMap(server, groupId, securityprotocol, saslmechanism, saslusername, saslpassword, m)
-		if gf.agentTelemetry != nil {
-			kc.newMonitor(gf.agentTelemetry)
-		}
 		return kc
 	})
 	if err != nil {
