@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.uber.org/dig"
@@ -117,7 +119,7 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		gf.traceMonitor = opts[0].(*GoTelemetry)
 		gf.traceMonitor.initTracer(ctx)
 		gf.server.Use(otelgin.Middleware(gf.traceMonitor.ProjectName))
-		gf.server.Use(Middleware())
+		runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second * 5))
 	}
 
 	gf.ioc.Provide(initializeViper)

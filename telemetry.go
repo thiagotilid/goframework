@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,19 @@ type GoTelemetry struct {
 }
 
 func NewTelemetry(projectName string, endpoint string, apiKey string) *GoTelemetry {
+	if len(endpoint) > 0 {
+		os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
+		os.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://localhost:58516/v1/metrics")
+	}
+
+	if len(apiKey) > 0 {
+		os.Setenv("OTEL_EXPORTER_OTLP_HEADERS", apiKey)
+	}
+
+	if len(projectName) > 0 {
+		os.Setenv("OTEL_SERVICE_NAME", projectName)
+	}
+
 	return &GoTelemetry{Endpoint: endpoint, ApiKey: apiKey, ProjectName: projectName}
 }
 
@@ -50,9 +64,6 @@ func (gt *GoTelemetry) initTracer(ctx context.Context) (shutdown func(context.Co
 		err = errors.Join(inErr, shutdown(ctx))
 	}
 
-	prop := newPropagator()
-	otel.SetTextMapPropagator(prop)
-
 	ctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 
@@ -73,14 +84,15 @@ func (gt *GoTelemetry) initTracer(ctx context.Context) (shutdown func(context.Co
 	}
 	shutdownFuncs = append(shutdownFuncs, tracerProvider.Shutdown)
 	otel.SetTracerProvider(tracerProvider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 
-	// meterProvider, err := newMeterProvider(ctx, res)
-	// if err != nil {
-	// 	handleErr(err)
-	// 	return
-	// }
-	// shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
-	// otel.SetMeterProvider(meterProvider)
+	meterProvider, err := newMeterProvider(ctx, res)
+	if err != nil {
+		handleErr(err)
+		return
+	}
+	shutdownFuncs = append(shutdownFuncs, meterProvider.Shutdown)
+	otel.SetMeterProvider(meterProvider)
 
 	// loggerProvider, err := newLoggerProvider(ctx)
 	// if err != nil {
@@ -91,13 +103,6 @@ func (gt *GoTelemetry) initTracer(ctx context.Context) (shutdown func(context.Co
 	// global.SetLoggerProvider(loggerProvider)
 
 	return
-}
-
-func newPropagator() propagation.TextMapPropagator {
-	return propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	)
 }
 
 func (gt *GoTelemetry) newTraceProvider(ctx context.Context, res *resource.Resource) (*trace.TracerProvider, error) {
