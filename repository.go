@@ -847,6 +847,61 @@ func (r *MongoDbRepository[T]) UpdateMany(
 	return nil
 }
 
+func (r *MongoDbRepository[T]) Push(
+	ctx context.Context,
+	filter map[string]interface{},
+	fields interface{}) error {
+
+	correlation := uuid.New()
+	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
+		if id, err := uuid.Parse(ctxCorrelation); err == nil {
+			correlation = id
+		}
+	}
+
+	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
+	mt.AddContent(fields)
+	mt.AddStack(100, "UPDATE")
+	mt.End()
+
+	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
+		if tid, err := uuid.Parse(tenantId); err == nil {
+			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
+			editors := GetEditors(ctx)
+			if len(editors) > 0 {
+				permissions := []Permission{}
+				for _, editor := range editors {
+					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
+				}
+				filter["$or"] = append(
+					filter["$or"].(bson.A),
+					bson.M{"permissions": bson.M{"$in": permissions}})
+			}
+		}
+	}
+
+	updt, err := r.pushDefaultParam(ctx, fields)
+	if err != nil {
+		return err
+	}
+
+	if os.Getenv("env") == "local" {
+		_, obj, err := bson.MarshalValue(fields)
+		fmt.Print(bson.Raw(obj), err)
+	}
+
+	re, err := r.collection.UpdateOne(getContext(ctx), filter, updt)
+	if err != nil {
+		return err
+	}
+
+	if re.MatchedCount == 0 {
+		return fmt.Errorf("MatchedCountZero")
+	}
+
+	return nil
+}
+
 func (r *MongoDbRepository[T]) PushMany(
 	ctx context.Context,
 	filter map[string]interface{},
@@ -891,6 +946,61 @@ func (r *MongoDbRepository[T]) PushMany(
 	}
 
 	re, err := r.collection.UpdateMany(getContext(ctx), filter, updt)
+	if err != nil {
+		return err
+	}
+
+	if re.MatchedCount == 0 {
+		return fmt.Errorf("MatchedCountZero")
+	}
+
+	return nil
+}
+
+func (r *MongoDbRepository[T]) Pull(
+	ctx context.Context,
+	filter map[string]interface{},
+	fields interface{}) error {
+
+	correlation := uuid.New()
+	if ctxCorrelation := GetContextHeader(ctx, XCORRELATIONID); ctxCorrelation != "" {
+		if id, err := uuid.Parse(ctxCorrelation); err == nil {
+			correlation = id
+		}
+	}
+
+	mt := r.monitoring.Start(correlation, r.sourceName, TracingTypeRepository)
+	mt.AddContent(fields)
+	mt.AddStack(100, "UPDATE")
+	mt.End()
+
+	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
+		if tid, err := uuid.Parse(tenantId); err == nil {
+			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
+			editors := GetEditors(ctx)
+			if len(editors) > 0 {
+				permissions := []Permission{}
+				for _, editor := range editors {
+					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
+				}
+				filter["$or"] = append(
+					filter["$or"].(bson.A),
+					bson.M{"permissions": bson.M{"$in": permissions}})
+			}
+		}
+	}
+
+	updt, err := r.pullDefaultParam(ctx, fields)
+	if err != nil {
+		return err
+	}
+
+	if os.Getenv("env") == "local" {
+		_, obj, err := bson.MarshalValue(fields)
+		fmt.Print(bson.Raw(obj), err)
+	}
+
+	re, err := r.collection.UpdateOne(getContext(ctx), filter, updt)
 	if err != nil {
 		return err
 	}
