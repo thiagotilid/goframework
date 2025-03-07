@@ -31,7 +31,7 @@ type GoTelemetry struct {
 func NewTelemetry(projectName string, endpoint string, apiKey string) *GoTelemetry {
 	if len(endpoint) > 0 {
 		os.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
-		os.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://localhost:58516/v1/metrics")
+		os.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://localhost:50862/v1/metrics")
 	}
 
 	if len(apiKey) > 0 {
