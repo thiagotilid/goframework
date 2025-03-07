@@ -54,7 +54,15 @@ type IRepository[T interface{}] interface {
 		ctx context.Context,
 		filter map[string]interface{},
 		fields interface{}) error
+	Push(
+		ctx context.Context,
+		filter map[string]interface{},
+		fields interface{}) error
 	PushMany(
+		ctx context.Context,
+		filter map[string]interface{},
+		fields interface{}) error
+	Pull(
 		ctx context.Context,
 		filter map[string]interface{},
 		fields interface{}) error
