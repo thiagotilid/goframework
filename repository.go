@@ -556,6 +556,10 @@ func (r *MongoDbRepository[T]) Replace(
 	var el bson.M
 	err := r.collection.FindOne(getContext(ctx), filter).Decode(&el)
 
+	if err == mongo.ErrNoDocuments {
+		return r.Insert(ctx, entity)
+	}
+
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		tid, err := uuid.Parse(tenantId)
 		if err != nil {
@@ -593,10 +597,6 @@ func (r *MongoDbRepository[T]) Replace(
 				return fmt.Errorf("Unauthorized")
 			}
 		}
-	}
-
-	if err == mongo.ErrNoDocuments {
-		return r.Insert(ctx, entity)
 	}
 
 	bsonM, err := r.replaceDefaultParam(ctx, el, entity)
