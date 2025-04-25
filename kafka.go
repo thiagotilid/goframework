@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
 
 type (
@@ -21,7 +21,6 @@ type (
 	GoKafka struct {
 		server           string
 		groupId          string
-		monitoring       *Monitoring
 		securityprotocol string
 		saslmechanism    string
 		saslusername     string
@@ -34,8 +33,7 @@ func NewKafkaConfigMap(connectionString string,
 	securityprotocol string,
 	saslmechanism string,
 	saslusername string,
-	saslpassword string,
-	monitoring *Monitoring) *GoKafka {
+	saslpassword string) *GoKafka {
 	return &GoKafka{
 		server:           connectionString,
 		groupId:          groupId,
@@ -43,7 +41,6 @@ func NewKafkaConfigMap(connectionString string,
 		saslmechanism:    saslmechanism,
 		saslusername:     saslusername,
 		saslpassword:     saslpassword,
-		monitoring:       monitoring,
 	}
 }
 
