@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
 
 type (
@@ -18,9 +18,9 @@ type (
 	Consumer interface {
 		HandleFn()
 	}
-	Producer[T interface{}] interface {
-		Publish(ctx context.Context, msgs ...*T) error
-		PublishWithKey(ctx context.Context, key []byte, msgs ...*T) error
+
+	Producer interface {
+		Publish(ctx context.Context, tp string, msg any) error
 	}
 )
 

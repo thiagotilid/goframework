@@ -34,7 +34,7 @@ type GoFrameworkOptions interface {
 	run(gf *GoFramework)
 }
 
-func AddTenant(monitoring *Monitoring, v *viper.Viper) gin.HandlerFunc {
+func AddTenant(v *viper.Viper) gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 
 		correlation := uuid.New()
@@ -77,15 +77,7 @@ func AddTenant(monitoring *Monitoring, v *viper.Viper) gin.HandlerFunc {
 			sourcename, _ = os.Hostname()
 		}
 
-		mt := monitoring.Start(correlation, sourcename, TracingTypeControler)
-		mt.AddStack(100, ctx.FullPath())
-
 		ctx.Next()
-
-		mt.AddStack(100, fmt.Sprintf("RESULT: %d", ctx.Writer.Status()))
-
-		mt.End()
-
 	}
 }
 
@@ -116,11 +108,10 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 	}
 
 	gf.ioc.Provide(initializeViper)
-	gf.ioc.Provide(NewMonitoring)
 	gf.ioc.Provide(newLog)
 
-	gf.ioc.Invoke(func(monitoring *Monitoring, v *viper.Viper) {
-		gf.server.Use(corsconfig, AddTenant(monitoring, v))
+	gf.ioc.Invoke(func(v *viper.Viper) {
+		gf.server.Use(corsconfig, AddTenant(v))
 	})
 
 	gf.server.GET("/health", func(ctx *gin.Context) {
@@ -294,8 +285,8 @@ func (gf *GoFramework) RegisterKafka(server string,
 	saslmechanism string,
 	saslusername string,
 	saslpassword string) {
-	err := gf.ioc.Provide(func(m *Monitoring) *GoKafka {
-		kc := NewKafkaConfigMap(server, groupId, securityprotocol, saslmechanism, saslusername, saslpassword, m)
+	err := gf.ioc.Provide(func() *GoKafka {
+		kc := NewKafkaConfigMap(server, groupId, securityprotocol, saslmechanism, saslusername, saslpassword)
 		return kc
 	})
 	if err != nil {
