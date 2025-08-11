@@ -279,6 +279,13 @@ func (gf *GoFramework) RegisterCache(constructor interface{}) {
 	}
 }
 
+func (gf *GoFramework) RegisterProducer(constructor interface{}) {
+	err := gf.ioc.Provide(constructor)
+	if err != nil {
+		log.Panic(err)
+	}
+}
+
 func (gf *GoFramework) RegisterKafka(server string,
 	groupId string,
 	securityprotocol string,

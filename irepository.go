@@ -40,7 +40,7 @@ type IRepository[T interface{}] interface {
 	DeleteManyForce(ctx context.Context,
 		filter map[string]interface{}) error
 	Aggregate(ctx context.Context,
-		pipeline []interface{}) (*mongo.Cursor, error)
+		pipeline bson.A) (*mongo.Cursor, error)
 	DefaultAggregate(ctx context.Context,
 		filter bson.A) (*mongo.Cursor, error)
 	Count(ctx context.Context,

@@ -98,6 +98,59 @@ func (r *MongoDbRepository[T]) appendTenantToFilterWithoutNil(ctx context.Contex
 	}
 }
 
+func (r *MongoDbRepository[T]) appendTenantPipeline(ctx context.Context, pipeline bson.A) bson.A {
+	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
+	var filter bson.A
+	if tid, err := uuid.Parse(tenantId); err == nil {
+		filter = bson.A{
+			bson.D{
+				{Key: "$match",
+					Value: bson.D{
+						{Key: "$or",
+							Value: bson.A{
+								bson.M{"tenantId": uuid.Nil},
+								bson.M{"tenantId": tid},
+							},
+						},
+						{Key: "active", Value: true},
+					},
+				},
+			},
+		}
+	} else {
+		filter = bson.A{
+			bson.D{
+				{Key: "$match",
+					Value: bson.M{"active": true},
+				},
+			},
+		}
+	}
+
+	filter = append(filter, pipeline...)
+
+	return filter
+}
+
+func (r *MongoDbRepository[T]) appendMatchParams(ctx context.Context, pipeline bson.A) bson.A {
+	def := make(map[string]interface{})
+
+	match := pipeline[0].(map[string]interface{})["$match"].(map[string]interface{})
+
+	def["active"] = true
+	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
+	if tid, err := uuid.Parse(tenantId); err == nil {
+		def["$or"] = bson.A{
+			bson.M{"tenantId": uuid.Nil},
+			bson.M{"tenantId": tid},
+		}
+	}
+
+	pipeline[0] = bson.D{{Key: "$match", Value: bson.D{{Key: "$and", Value: []interface{}{def, match}}}}}
+
+	return pipeline
+}
+
 func (r *MongoDbRepository[T]) GetAll(
 	ctx context.Context,
 	filter map[string]interface{},
@@ -787,38 +840,13 @@ func (r *MongoDbRepository[T]) DeleteManyForce(
 	return nil
 }
 
-func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline []interface{}) (*mongo.Cursor, error) {
-
+func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline bson.A) (*mongo.Cursor, error) {
 	var filter bson.A
-
-	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
-	if tid, err := uuid.Parse(tenantId); err == nil {
-		filter = bson.A{
-			bson.D{
-				{Key: "$match",
-					Value: bson.D{
-						{Key: "$or",
-							Value: bson.A{
-								bson.M{"tenantId": uuid.Nil},
-								bson.M{"tenantId": tid},
-							},
-						},
-						{Key: "active", Value: true},
-					},
-				},
-			},
-		}
+	if r.checkPipelineStartMatch(pipeline) {
+		filter = r.appendMatchParams(ctx, pipeline)
 	} else {
-		filter = bson.A{
-			bson.D{
-				{Key: "$match",
-					Value: bson.M{"active": true},
-				},
-			},
-		}
+		filter = r.appendTenantPipeline(ctx, pipeline)
 	}
-
-	filter = append(filter, pipeline...)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -856,4 +884,13 @@ func (r *MongoDbRepository[T]) Count(ctx context.Context,
 	}
 
 	return count
+}
+
+func (r *MongoDbRepository[T]) checkPipelineStartMatch(pipeline bson.A) bool {
+	if len(pipeline) == 0 {
+		return false
+	}
+
+	_, ok := pipeline[0].(map[string]interface{})["$match"]
+	return ok
 }
