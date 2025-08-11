@@ -90,9 +90,6 @@ func (kp *KafkaProducer) Publish(ctx context.Context, tp string, msg any) error 
 			XAUTHORID,
 			XCORRELATIONID,
 			XCREATEDAT,
-			XREADERS,
-			XNOTREADERS,
-			XEDITORS,
 		})
 
 	data, err := json.Marshal(msg)

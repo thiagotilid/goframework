@@ -2,23 +2,18 @@ package goframework
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
-	"net/http"
 	"os"
 	"reflect"
 	"regexp"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -34,135 +29,11 @@ type DataList[T interface{}] struct {
 	Total int64
 }
 
-type Permission struct {
-	ResourceId   uuid.UUID `bson:"resourceId"`
-	ResourceType string    `bson:"resourceType"`
-}
-
 type MongoDbRepository[T interface{}] struct {
 	db         *mongo.Database
 	collection *mongo.Collection
 	dataList   *DataList[T]
 	sourceName string
-}
-
-func AddEditors(ctx context.Context, resourceType string) {
-	tenantId, err := uuid.Parse(GetContextHeader(ctx, XTENANTID))
-	if err != nil {
-		return
-	}
-
-	newReaders := make([]Permission, 0)
-	reaadersstr := GetContextHeader(ctx, XEDITORS)
-	if reaadersstr != "" {
-		decodedReaders, _ := base64.StdEncoding.DecodeString(reaadersstr)
-		err := json.Unmarshal(decodedReaders, &newReaders)
-		if err != nil {
-			return
-		}
-	}
-
-	if newReaders == nil {
-		newReaders = []Permission{{ResourceId: tenantId, ResourceType: resourceType}}
-	} else {
-		newReaders = append(newReaders, Permission{ResourceId: tenantId, ResourceType: resourceType})
-	}
-
-	encodedReaders, err := json.Marshal(newReaders)
-	if err != nil {
-		return
-	}
-	encodedReadersStr := base64.StdEncoding.EncodeToString(encodedReaders)
-	AddToContext(ctx, XEDITORS, encodedReadersStr)
-}
-
-func AddReaders(ctx context.Context, readers []Permission) {
-	newReaders := make([]Permission, 0)
-	reaadersstr := GetContextHeader(ctx, XREADERS)
-	if reaadersstr != "" {
-		decodedReaders, _ := base64.StdEncoding.DecodeString(reaadersstr)
-		err := json.Unmarshal(decodedReaders, &newReaders)
-		if err != nil {
-			return
-		}
-	}
-
-	if newReaders == nil {
-		newReaders = readers
-	} else {
-		newReaders = append(newReaders, readers...)
-	}
-
-	encodedReaders, err := json.Marshal(newReaders)
-	if err != nil {
-		return
-	}
-	encodedReadersStr := base64.StdEncoding.EncodeToString(encodedReaders)
-	AddToContext(ctx, XREADERS, encodedReadersStr)
-}
-
-func RemoveReaders(ctx context.Context, readers []Permission) {
-	newReaders := make([]Permission, 0)
-	reaadersstr := GetContextHeader(ctx, XNOTREADERS)
-	if reaadersstr != "" {
-		decodedReaders, _ := base64.StdEncoding.DecodeString(reaadersstr)
-		err := json.Unmarshal(decodedReaders, &newReaders)
-		if err != nil {
-			return
-		}
-	}
-
-	if newReaders == nil {
-		newReaders = readers
-	} else {
-		newReaders = append(newReaders, readers...)
-	}
-
-	encodedReaders, err := json.Marshal(newReaders)
-	if err != nil {
-		return
-	}
-	encodedReadersStr := base64.StdEncoding.EncodeToString(encodedReaders)
-	AddToContext(ctx, XNOTREADERS, encodedReadersStr)
-}
-
-func GetReaders(ctx context.Context) []Permission {
-	newReaders := make([]Permission, 0)
-	reaadersstr := GetContextHeader(ctx, XREADERS)
-	if reaadersstr != "" {
-		decodedReaders, _ := base64.StdEncoding.DecodeString(reaadersstr)
-		err := json.Unmarshal(decodedReaders, &newReaders)
-		if err != nil {
-			return make([]Permission, 0)
-		}
-	}
-	return newReaders
-}
-
-func GetNotReaders(ctx context.Context) []Permission {
-	newReaders := make([]Permission, 0)
-	reaadersstr := GetContextHeader(ctx, XNOTREADERS)
-	if reaadersstr != "" {
-		decodedReaders, _ := base64.StdEncoding.DecodeString(reaadersstr)
-		err := json.Unmarshal(decodedReaders, &newReaders)
-		if err != nil {
-			return make([]Permission, 0)
-		}
-	}
-	return newReaders
-}
-
-func GetEditors(ctx context.Context) []Permission {
-	newReaders := make([]Permission, 0)
-	reaadersstr := GetContextHeader(ctx, XEDITORS)
-	if reaadersstr != "" {
-		decodedReaders, _ := base64.StdEncoding.DecodeString(reaadersstr)
-		err := json.Unmarshal(decodedReaders, &newReaders)
-		if err != nil {
-			return make([]Permission, 0)
-		}
-	}
-	return newReaders
 }
 
 func NewMongoDbRepository[T interface{}](
@@ -197,7 +68,6 @@ func (r *MongoDbRepository[T]) appendTenantToFilterAgg(ctx context.Context, filt
 			f := bson.A{
 				bson.M{"tenantId": tid},
 				bson.M{"tenantId": uuid.Nil},
-				bson.M{"permissions.resourceId": tid},
 			}
 
 			filterAggregator["$and"] = append(filterAggregator["$and"], map[string]interface{}{"$or": f})
@@ -211,7 +81,6 @@ func (r *MongoDbRepository[T]) appendTenantToFilter(ctx context.Context, filter 
 			filter["$or"] = bson.A{
 				bson.M{"tenantId": tid},
 				bson.M{"tenantId": uuid.Nil},
-				bson.M{"permissions.resourceId": tid},
 			}
 			filter["active"] = true
 		}
@@ -223,11 +92,63 @@ func (r *MongoDbRepository[T]) appendTenantToFilterWithoutNil(ctx context.Contex
 		if tid, err := uuid.Parse(tenantId); err == nil {
 			filter["$or"] = bson.A{
 				bson.M{"tenantId": tid},
-				bson.M{"permissions.resourceId": tid},
 			}
 			filter["active"] = true
 		}
 	}
+}
+
+func (r *MongoDbRepository[T]) appendTenantPipeline(ctx context.Context, pipeline bson.A) bson.A {
+	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
+	var filter bson.A
+	if tid, err := uuid.Parse(tenantId); err == nil {
+		filter = bson.A{
+			bson.D{
+				{Key: "$match",
+					Value: bson.D{
+						{Key: "$or",
+							Value: bson.A{
+								bson.M{"tenantId": uuid.Nil},
+								bson.M{"tenantId": tid},
+							},
+						},
+						{Key: "active", Value: true},
+					},
+				},
+			},
+		}
+	} else {
+		filter = bson.A{
+			bson.D{
+				{Key: "$match",
+					Value: bson.M{"active": true},
+				},
+			},
+		}
+	}
+
+	filter = append(filter, pipeline...)
+
+	return filter
+}
+
+func (r *MongoDbRepository[T]) appendMatchParams(ctx context.Context, pipeline bson.A) bson.A {
+	def := make(map[string]interface{})
+
+	match := pipeline[0].(map[string]interface{})["$match"].(map[string]interface{})
+
+	def["active"] = true
+	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
+	if tid, err := uuid.Parse(tenantId); err == nil {
+		def["$or"] = bson.A{
+			bson.M{"tenantId": uuid.Nil},
+			bson.M{"tenantId": tid},
+		}
+	}
+
+	pipeline[0] = bson.D{{Key: "$match", Value: bson.D{{Key: "$and", Value: []interface{}{def, match}}}}}
+
+	return pipeline
 }
 
 func (r *MongoDbRepository[T]) GetAll(
@@ -354,8 +275,6 @@ func (r *MongoDbRepository[T]) insertDefaultParam(ctx context.Context, entity *T
 		}
 	}
 
-	bsonM["permissions"] = GetReaders(ctx)
-
 	var history = make(map[string]interface{})
 	history["ActionAt"] = time.Now()
 	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
@@ -387,21 +306,6 @@ func (r *MongoDbRepository[T]) replaceDefaultParam(ctx context.Context, old bson
 	bsonM["created"] = old["created"]
 	bsonM["updated"] = history
 	bsonM["active"] = old["active"]
-
-	bsonM["permissions"] = bson.A{}
-	if old["permissions"] != nil {
-		for _, permission := range old["permissions"].(bson.A) {
-			permission := permission.(primitive.M)
-			bsonM["permissions"] = append(bsonM["permissions"].(bson.A),
-				bson.D{{
-					Key:   "resourceId",
-					Value: permission["resourceId"],
-				}, {
-					Key:   "resourceType",
-					Value: permission["resourceType"],
-				}})
-		}
-	}
 
 	return bsonM, nil
 }
@@ -452,16 +356,6 @@ func (r *MongoDbRepository[T]) pushDefaultParam(ctx context.Context, entity inte
 	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
 	updt["$set"] = bson.M{"updated": history}
 
-	readers := GetReaders(ctx)
-	if len(readers) > 0 {
-		updt["$addToSet"] = bson.D{{Key: "permissions", Value: bson.D{{Key: "$each", Value: readers}}}}
-	}
-
-	notreaders := GetNotReaders(ctx)
-	if len(notreaders) > 0 {
-		updt["$pullAll"] = bson.D{{Key: "permissions", Value: notreaders}}
-	}
-
 	return updt, nil
 }
 
@@ -486,16 +380,6 @@ func (r *MongoDbRepository[T]) pullDefaultParam(ctx context.Context, entity inte
 	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
 	historyBson := bson.M{"updated": history}
 	updt["$set"] = historyBson
-
-	readers := GetReaders(ctx)
-	if len(readers) > 0 {
-		updt["$addToSet"] = bson.D{{Key: "permissions", Value: bson.D{{Key: "$each", Value: readers}}}}
-	}
-
-	notreaders := GetNotReaders(ctx)
-	if len(notreaders) > 0 {
-		updt["$pullAll"] = bson.D{{Key: "permissions", Value: notreaders}}
-	}
 
 	return updt, nil
 }
@@ -546,57 +430,18 @@ func (r *MongoDbRepository[T]) Replace(
 	filter map[string]interface{},
 	entity *T) error {
 
+	r.appendTenantToFilterWithoutNil(ctx, filter)
+
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
 		fmt.Print(bson.Raw(obj), err)
 	}
-
-	r.appendTenantToFilterWithoutNil(ctx, filter)
 
 	var el bson.M
 	err := r.collection.FindOne(getContext(ctx), filter).Decode(&el)
 
 	if err == mongo.ErrNoDocuments {
 		return r.Insert(ctx, entity)
-	}
-
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		tid, err := uuid.Parse(tenantId)
-		if err != nil {
-			return err
-		}
-
-		dataTenant, err := uuid.FromBytes(el["tenantId"].(primitive.Binary).Data)
-		if err != nil {
-			return err
-		}
-
-		if tid != uuid.Nil && dataTenant != tid {
-			autorized := false
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				if permissions, ok := el["permissions"].(bson.A); ok {
-					for _, permission := range permissions {
-						permission := permission.(primitive.M)
-						for _, editor := range editors {
-							resourceId, err := uuid.FromBytes(permission["resourceId"].(primitive.Binary).Data)
-							if err != nil {
-								break
-							}
-							if permission["resourceType"] == editor.ResourceType && resourceId == editor.ResourceId {
-								autorized = true
-								break
-							}
-						}
-					}
-				}
-			}
-
-			if !autorized {
-				ctx.(*gin.Context).AbortWithStatus(http.StatusUnauthorized)
-				return fmt.Errorf("Unauthorized")
-			}
-		}
 	}
 
 	if err == mongo.ErrNoDocuments {
@@ -613,24 +458,6 @@ func (r *MongoDbRepository[T]) Replace(
 		return err
 	}
 
-	payload := make(map[string]interface{})
-	readers := GetReaders(ctx)
-	if len(readers) > 0 {
-		payload["$addToSet"] = bson.D{{Key: "permissions", Value: bson.D{{Key: "$each", Value: readers}}}}
-	}
-
-	notreaders := GetNotReaders(ctx)
-	if len(notreaders) > 0 {
-		payload["$pullAll"] = bson.D{{Key: "permissions", Value: notreaders}}
-	}
-
-	if len(payload) > 0 {
-		_, err = r.collection.UpdateOne(getContext(ctx), filter, payload)
-		if err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -639,21 +466,7 @@ func (r *MongoDbRepository[T]) Update(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	setBson, err := r.updateDefaultParam(ctx, fields)
 	if err != nil {
@@ -667,17 +480,6 @@ func (r *MongoDbRepository[T]) Update(
 
 	payload := make(map[string]interface{})
 	payload["$set"] = setBson
-
-	readers := GetReaders(ctx)
-	if len(readers) > 0 {
-		payload["$addToSet"] = bson.D{{Key: "permissions", Value: bson.D{{Key: "$each", Value: readers}}}}
-	}
-
-	notreaders := GetNotReaders(ctx)
-	if len(notreaders) > 0 {
-		payload["$pullAll"] = bson.D{{Key: "permissions", Value: notreaders}}
-	}
-
 	re, err := r.collection.UpdateOne(getContext(ctx), filter, payload)
 
 	if err != nil {
@@ -734,21 +536,7 @@ func (r *MongoDbRepository[T]) UpdateMany(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	setBson, err := r.updateDefaultParam(ctx, fields)
 	if err != nil {
@@ -778,21 +566,7 @@ func (r *MongoDbRepository[T]) Push(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	updt, err := r.pushDefaultParam(ctx, fields)
 	if err != nil {
@@ -821,21 +595,7 @@ func (r *MongoDbRepository[T]) PushMany(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	updt, err := r.pushDefaultParam(ctx, fields)
 	if err != nil {
@@ -864,21 +624,7 @@ func (r *MongoDbRepository[T]) Pull(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	updt, err := r.pullDefaultParam(ctx, fields)
 	if err != nil {
@@ -907,21 +653,7 @@ func (r *MongoDbRepository[T]) PullMany(
 	filter map[string]interface{},
 	fields interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	updt, err := r.pullDefaultParam(ctx, fields)
 	if err != nil {
@@ -945,64 +677,11 @@ func (r *MongoDbRepository[T]) PullMany(
 	return nil
 }
 
-func (r *MongoDbRepository[T]) SetReaders(
-	ctx context.Context,
-	filter map[string]interface{}) error {
-
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
-
-	updt := bson.M{}
-	readers := GetReaders(ctx)
-	if len(readers) > 0 {
-		updt["$addToSet"] = bson.D{{Key: "permissions", Value: bson.D{{Key: "$each", Value: readers}}}}
-	}
-
-	notreaders := GetNotReaders(ctx)
-	if len(notreaders) > 0 {
-		updt["$pullAll"] = bson.D{{Key: "permissions", Value: notreaders}}
-	}
-
-	_, err := r.collection.UpdateMany(getContext(ctx), filter, updt)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (r *MongoDbRepository[T]) Delete(
 	ctx context.Context,
 	filter map[string]interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -1027,21 +706,7 @@ func (r *MongoDbRepository[T]) DeleteMany(
 	ctx context.Context,
 	filter map[string]interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -1131,21 +796,7 @@ func (r *MongoDbRepository[T]) DeleteForce(
 	ctx context.Context,
 	filter map[string]interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -1169,21 +820,7 @@ func (r *MongoDbRepository[T]) DeleteManyForce(
 	ctx context.Context,
 	filter map[string]interface{}) error {
 
-	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
-		if tid, err := uuid.Parse(tenantId); err == nil {
-			filter["$or"] = bson.A{bson.M{"tenantId": tid}}
-			editors := GetEditors(ctx)
-			if len(editors) > 0 {
-				permissions := []Permission{}
-				for _, editor := range editors {
-					permissions = append(permissions, Permission{ResourceId: editor.ResourceId, ResourceType: editor.ResourceType})
-				}
-				filter["$or"] = append(
-					filter["$or"].(bson.A),
-					bson.M{"permissions": bson.M{"$in": permissions}})
-			}
-		}
-	}
+	r.appendTenantToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -1203,39 +840,13 @@ func (r *MongoDbRepository[T]) DeleteManyForce(
 	return nil
 }
 
-func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline []interface{}) (*mongo.Cursor, error) {
-
+func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline bson.A) (*mongo.Cursor, error) {
 	var filter bson.A
-
-	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
-	if tid, err := uuid.Parse(tenantId); err == nil {
-		filter = bson.A{
-			bson.D{
-				{Key: "$match",
-					Value: bson.D{
-						{Key: "$or",
-							Value: bson.A{
-								bson.M{"tenantId": uuid.Nil},
-								bson.M{"tenantId": tid},
-								bson.M{"permissions.resourceId": tid},
-							},
-						},
-						{Key: "active", Value: true},
-					},
-				},
-			},
-		}
+	if r.checkPipelineStartMatch(pipeline) {
+		filter = r.appendMatchParams(ctx, pipeline)
 	} else {
-		filter = bson.A{
-			bson.D{
-				{Key: "$match",
-					Value: bson.M{"active": true},
-				},
-			},
-		}
+		filter = r.appendTenantPipeline(ctx, pipeline)
 	}
-
-	filter = append(filter, pipeline...)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -1275,18 +886,11 @@ func (r *MongoDbRepository[T]) Count(ctx context.Context,
 	return count
 }
 
-func (r *MongoDbRepository[T]) SetExpiredAfterInsert(ctx context.Context, seconds int32) error {
-	opts := options.Index()
-	opts.SetExpireAfterSeconds(seconds)
-	index := mongo.IndexModel{
-		Keys:    bson.M{"created.ActionAt": 1},
-		Options: opts,
+func (r *MongoDbRepository[T]) checkPipelineStartMatch(pipeline bson.A) bool {
+	if len(pipeline) == 0 {
+		return false
 	}
 
-	_, err := r.collection.Indexes().CreateOne(ctx, index)
-	if err != nil {
-		panic(err)
-	}
-
-	return nil
+	_, ok := pipeline[0].(map[string]interface{})["$match"]
+	return ok
 }

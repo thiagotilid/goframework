@@ -3,7 +3,6 @@ package goframework
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"fmt"
 	"strings"
 	"time"
@@ -23,9 +22,6 @@ const (
 	XAUTHORID      string = "X-Author-Id"
 	XCORRELATIONID string = "X-Correlation-Id"
 	XCREATEDAT     string = "X-CreatedAt"
-	XREADERS       string = "X-Readers"
-	XNOTREADERS    string = "X-Not-Readers"
-	XEDITORS       string = "X-Editors"
 
 	B2B2C string = "assistancecompanies"
 )
@@ -178,7 +174,7 @@ func helperContextKafka(c context.Context, addfilter []string) *kHeader {
 }
 
 func ToContext(c context.Context) context.Context {
-	listContext := []string{XTENANTID, XAUTHOR, XAUTHORID, XCORRELATIONID, TTENANTID, XCREATEDAT, XREADERS}
+	listContext := []string{XTENANTID, XAUTHOR, XAUTHORID, XCORRELATIONID, TTENANTID, XCREATEDAT}
 
 	cc := context.Background()
 	switch c := c.(type) {
@@ -268,9 +264,4 @@ func UnmarshalWithRegistry(data []byte, val interface{}) error {
 	dec.SetRegistry(MongoRegistry)
 
 	return dec.Decode(val)
-}
-
-func CnpjToGuid(s string) uuid.UUID {
-	hash := md5.Sum([]byte(s))
-	return uuid.NewMD5(uuid.NameSpaceOID, hash[:])
 }
