@@ -126,3 +126,42 @@ func (kp *KafkaProducer) Publish(ctx context.Context, tp string, msg any) error 
 
 	return nil
 }
+
+func (kp *KafkaProducer) PublishWithKey(ctx context.Context, tp string, key []byte, msg any) error {
+	txn := newrelic.FromContext(ctx)
+	nrSegment := txn.StartSegment(tp)
+	nrSegment.AddAttribute("span.kind", "client")
+	defer nrSegment.End()
+
+	headers := helperContextKafka(ctx,
+		[]string{
+			XTENANTID,
+			XAUTHOR,
+			XAUTHORID,
+			XCORRELATIONID,
+			XCREATEDAT,
+		})
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	delivery_chan := make(chan kafka.Event)
+	if err = kp.kp.Produce(&kafka.Message{
+		TopicPartition: kafka.TopicPartition{
+			Topic:     &tp,
+			Partition: kafka.PartitionAny,
+			Offset:    kafka.OffsetEnd,
+		},
+		Value:   data,
+		Headers: headers.ToKafkaHeader(),
+		Key:     key,
+	}, delivery_chan); err != nil {
+		fmt.Println(err.Error())
+		return err
+	}
+	<-delivery_chan
+
+	return nil
+}
