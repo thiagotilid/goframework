@@ -279,6 +279,7 @@ func (gf *GoFramework) RegisterCache(constructor interface{}) {
 	}
 }
 
+// Used to register default producer
 func (gf *GoFramework) RegisterProducer(constructor interface{}) {
 	err := gf.ioc.Provide(constructor)
 	if err != nil {

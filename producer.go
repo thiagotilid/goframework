@@ -2,22 +2,34 @@ package goframework
 
 import (
 	"context"
+
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
 
 type (
+	ProducerSettings struct {
+		Topic             string
+		NumPartitions     int
+		ReplicationFactor int
+
+		Partition    int32
+		Offset       kafka.Offset
+		TimeoutFlush int
+	}
+
 	TopicProducer[T any] struct {
 		producer Producer
-		topic    string
+		settings *ProducerSettings
 	}
 )
 
-func NewTopicProducer[T any](p Producer, t string) *TopicProducer[T] {
+func NewTopicProducer[T any](p Producer, ps *ProducerSettings) *TopicProducer[T] {
 	return &TopicProducer[T]{
 		producer: p,
-		topic:    t,
+		settings: ps,
 	}
 }
 
 func (kp *TopicProducer[T]) Publish(ctx context.Context, msg *T) error {
-	return kp.producer.Publish(ctx, kp.topic, msg)
+	return kp.producer.Publish(ctx, kp.settings.Topic, msg)
 }
