@@ -21,6 +21,7 @@ type (
 
 	Producer interface {
 		Publish(ctx context.Context, tp string, msg any) error
+		PublishWithKey(ctx context.Context, tp string, key []byte, msg any) error
 	}
 )
 

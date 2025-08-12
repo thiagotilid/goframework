@@ -33,3 +33,7 @@ func NewTopicProducer[T any](p Producer, ps *ProducerSettings) *TopicProducer[T]
 func (kp *TopicProducer[T]) Publish(ctx context.Context, msg *T) error {
 	return kp.producer.Publish(ctx, kp.settings.Topic, msg)
 }
+
+func (kp *TopicProducer[T]) PublishWithKey(ctx context.Context, key []byte, msg *T) error {
+	return kp.producer.PublishWithKey(ctx, kp.settings.Topic, key, msg)
+}
