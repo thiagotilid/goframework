@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/google/uuid"
 	"github.com/newrelic/go-agent/v3/newrelic"
 )
