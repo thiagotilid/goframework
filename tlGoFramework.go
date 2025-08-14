@@ -211,18 +211,7 @@ func (gf *GoFramework) RegisterDbMongo(host string, user string, pass string, da
 
 	gf.healthCheck = append(gf.healthCheck, func() (string, bool) {
 		serviceName := "MDB"
-		cli, err := newMongoClient(opts, normalize)
-		defer func() {
-			if err = cli.Disconnect(context.TODO()); err != nil {
-				panic(err)
-			}
-		}()
-
-		if err != nil {
-			return serviceName, false
-		}
-
-		if err := cli.Ping(context.Background(), readpref.Nearest()); err != nil {
+		if err := gf.ioc.Invoke(gf.PingMongoClient); err != nil {
 			return serviceName, false
 		}
 		return serviceName, true
@@ -231,6 +220,11 @@ func (gf *GoFramework) RegisterDbMongo(host string, user string, pass string, da
 	if err != nil {
 		log.Panic(err)
 	}
+}
+
+// mongo ping for health check
+func (gf *GoFramework) PingMongoClient(db *mongo.Database) error {
+	return db.Client().Ping(context.Background(), readpref.Nearest())
 }
 
 // Redis
