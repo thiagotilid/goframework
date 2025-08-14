@@ -132,10 +132,13 @@ func (r *MongoDbRepository[T]) appendTenantPipeline(ctx context.Context, pipelin
 	return filter
 }
 
-func (r *MongoDbRepository[T]) appendMatchParams(ctx context.Context, pipeline bson.A) bson.A {
+func (r *MongoDbRepository[T]) appendMatchParams(ctx context.Context, pipeline bson.A) (bson.A, error) {
 	def := make(map[string]interface{})
 
-	match := pipeline[0].(map[string]interface{})["$match"].(map[string]interface{})
+	match, err := r.getInterfaceKey(pipeline[0], "$match")
+	if err != nil {
+		return nil, err
+	}
 
 	def["active"] = true
 	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
@@ -148,7 +151,7 @@ func (r *MongoDbRepository[T]) appendMatchParams(ctx context.Context, pipeline b
 
 	pipeline[0] = bson.D{{Key: "$match", Value: bson.D{{Key: "$and", Value: []interface{}{def, match}}}}}
 
-	return pipeline
+	return pipeline, nil
 }
 
 func (r *MongoDbRepository[T]) GetAll(
@@ -842,8 +845,17 @@ func (r *MongoDbRepository[T]) DeleteManyForce(
 
 func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline bson.A) (*mongo.Cursor, error) {
 	var filter bson.A
-	if r.checkPipelineStartMatch(pipeline) {
-		filter = r.appendMatchParams(ctx, pipeline)
+
+	ok, err := r.checkPipelineStartMatch(pipeline)
+	if err != nil {
+		return nil, err
+	}
+
+	if ok {
+		filter, err = r.appendMatchParams(ctx, pipeline)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		filter = r.appendTenantPipeline(ctx, pipeline)
 	}
@@ -886,11 +898,53 @@ func (r *MongoDbRepository[T]) Count(ctx context.Context,
 	return count
 }
 
-func (r *MongoDbRepository[T]) checkPipelineStartMatch(pipeline bson.A) bool {
+func (r *MongoDbRepository[T]) checkPipelineStartMatch(pipeline bson.A) (bool, error) {
 	if len(pipeline) == 0 {
-		return false
+		return false, nil
 	}
 
-	_, ok := pipeline[0].(map[string]interface{})["$match"]
-	return ok
+	switch v := pipeline[0].(type) {
+	case map[string]interface{}:
+		_, ok := v["$match"]
+		return ok, nil
+	case bson.D:
+		for _, e := range v {
+			if e.Key == "$match" {
+				return true, nil
+			}
+		}
+		return false, nil
+	case bson.M:
+		_, ok := v["$match"]
+		return ok, nil
+	default:
+		return false, errors.New("invalid type")
+	}
+}
+
+func (r *MongoDbRepository[T]) getInterfaceKey(obj interface{}, key string) (interface{}, error) {
+
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		m, ok := v["$match"]
+		if !ok {
+			return nil, errors.New("key not found")
+		}
+		return m, nil
+	case bson.D:
+		for _, e := range v {
+			if e.Key == "$match" {
+				return e.Value, nil
+			}
+		}
+		return nil, errors.New("key not found")
+	case bson.M:
+		m, ok := v["$match"]
+		if !ok {
+			return nil, errors.New("key not found")
+		}
+		return m, nil
+	default:
+		return false, errors.New("invalid type")
+	}
 }
