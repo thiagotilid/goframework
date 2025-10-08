@@ -29,7 +29,6 @@ type GoFramework struct {
 	configuration *viper.Viper
 	server        *gin.Engine
 	routeRegister func() error
-	module        string
 	healthCheck   []func() (string, bool)
 }
 
@@ -178,8 +177,7 @@ func (gf *GoFramework) RegisterController(controller interface{}) {
 	}
 }
 
-func (gf *GoFramework) Start(module string) error {
-	gf.module = module
+func (gf *GoFramework) Start() error {
 	port := os.Getenv("port")
 	if port == "" {
 		port = "8081"
@@ -333,30 +331,34 @@ func (gf *GoFramework) RegisterKafkaConsumer(consumer interface{}) {
 func (gf *GoFramework) RegisterRoutes(db *mongo.Database) {
 	coll := db.Client().Database("user").Collection("routes")
 
-	opt := options.InsertOne()
-	opt.SetBypassDocumentValidation(true)
+	mod := os.Getenv("API_HOST")
 
-	coll.DeleteMany(context.Background(), map[string]interface{}{"module": gf.module})
+	if mod != "" {
+		opt := options.InsertOne()
+		opt.SetBypassDocumentValidation(true)
 
-	for _, r := range gf.server.Routes() {
-		data := NewRoute(r, gf.module)
+		coll.DeleteMany(context.Background(), map[string]interface{}{"module": mod})
 
-		bsonMap, err := MarshalWithRegistry(data)
-		if err != nil {
-			panic(err)
-		}
+		for _, r := range gf.server.Routes() {
+			data := NewRoute(r, mod)
 
-		var bsonM bson.M
-		err = bson.Unmarshal(bsonMap, &bsonM)
-		if err != nil {
-			panic(err)
-		}
+			bsonMap, err := MarshalWithRegistry(data)
+			if err != nil {
+				panic(err)
+			}
 
-		bsonM["active"] = true
-		bsonM["tenantId"] = uuid.Nil
+			var bsonM bson.M
+			err = bson.Unmarshal(bsonMap, &bsonM)
+			if err != nil {
+				panic(err)
+			}
 
-		if _, err = coll.InsertOne(context.Background(), bsonMap, opt); err != nil {
-			panic(err)
+			bsonM["active"] = true
+			bsonM["tenantId"] = uuid.Nil
+
+			if _, err = coll.InsertOne(context.Background(), bsonMap, opt); err != nil {
+				panic(err)
+			}
 		}
 	}
 }
