@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
@@ -13,6 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/bsonrw"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.opentelemetry.io/contrib/instrumentation/go.mongodb.org/mongo-driver/mongo/otelmongo"
 )
 
 var (
@@ -72,15 +72,13 @@ func UuidDecodeValue(dc bsoncodec.DecodeContext, vr bsonrw.ValueReader, val refl
 	return nil
 }
 
-func newMongoClient(opts *options.ClientOptions, normalize bool) (*mongo.Client, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+func newMongoClient(ctx context.Context, opts *options.ClientOptions, normalize bool) (*mongo.Client, error) {
 
 	if normalize {
 		MongoRegistry.RegisterTypeEncoder(tstr, bsoncodec.ValueEncoderFunc(StringNormalizeEncodeValue))
 	}
 
-	return mongo.Connect(ctx, opts.SetRegistry(MongoRegistry))
+	return mongo.Connect(ctx, opts.SetRegistry(MongoRegistry).SetMonitor(otelmongo.NewMonitor()))
 
 }
 

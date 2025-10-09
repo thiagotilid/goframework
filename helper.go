@@ -9,7 +9,8 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsonrw"
@@ -98,6 +99,14 @@ func (kh *kHeader) ToKafkaHeader() []kafka.Header {
 		header = append(header, kafka.Header{Key: k, Value: []byte(v)})
 	}
 	return header
+}
+
+func (kh *kHeader) ToMapStringSlice() map[string][]string {
+	result := make(map[string][]string)
+	for k, v := range kh.keys {
+		result[k] = []string{v}
+	}
+	return result
 }
 
 func (kh *kHeader) GetString(key string) string {

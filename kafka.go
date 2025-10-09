@@ -9,6 +9,10 @@ import (
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type (
@@ -79,6 +83,8 @@ type (
 )
 
 func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka.Consumer, fn ConsumerFunc, kc *kafka.ConfigMap, kcs *KafkaConsumerSettings, done chan<- struct{}) {
+	tracer := otel.Tracer("")
+
 	for msg := range messages {
 		log.Printf("[Worker %d] Processando mensagem: %s", id, string(msg.Value))
 		func(cmsg *kafka.Message,
@@ -88,9 +94,21 @@ func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka
 			cfn ConsumerFunc) {
 			defer recover_all()
 			defer cconsumer.CommitMessage(cmsg)
-			ctx := context.Background()
+
+			carrier := kafkaHeaderCarrier{&msg.Headers}
+			ctx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+			ctx, span := tracer.Start(ctx, fmt.Sprintf("KAFKA SUB %s", kcs.Topic),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", kcs.Topic)),
+			)
 			kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
+			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", kcs.Topic)),
+			)
 			consumer.CommitMessage(msg)
+			span2.End()
+			span.End()
 			<-messages
 
 		}(msg, consumer, kc, *kcs, fn)
@@ -168,6 +186,8 @@ func (k *GoKafka) ConsumerMultiRoutine(
 	fn ConsumerFunc,
 	cfg ConsumerMultiRoutineSettings) {
 	go func(topic string) {
+		tracer := otel.Tracer("")
+
 		kcs := &KafkaConsumerSettings{
 			Topic:           topic,
 			AutoOffsetReset: cfg.AutoOffsetReset,
@@ -229,9 +249,20 @@ func (k *GoKafka) ConsumerMultiRoutine(
 				defer func() {
 					*ptr_r--
 				}()
-				ctx := context.Background()
+				carrier := kafkaHeaderCarrier{&msg.Headers}
+				ctx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+				ctx, span := tracer.Start(ctx, fmt.Sprintf("KAFKA SUB %s", topic),
+					trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+					trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+				)
 				kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
+				_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
+					trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+					trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+				)
 				consumer.CommitMessage(msg)
+				span2.End()
+				span.End()
 			}(msg, consumer, kc, *kcs, fn)
 			wait_until(func() bool {
 				return *ptr_r >= cfg.Routines
@@ -242,6 +273,7 @@ func (k *GoKafka) ConsumerMultiRoutine(
 
 func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 	go func(topic string) {
+		tracer := otel.Tracer("")
 
 		kcs := &KafkaConsumerSettings{
 			Topic:           topic,
@@ -296,9 +328,21 @@ func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 				continue
 			}
 
-			ctx := context.Background()
+			carrier := kafkaHeaderCarrier{&msg.Headers}
+			ctx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+			ctx, span := tracer.Start(ctx, fmt.Sprintf("KAFKA SUB %s", topic),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+			)
 			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
+
+			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+			)
 			consumer.CommitMessage(msg)
+			span2.End()
+			span.End()
 		}
 
 	}(topic)
@@ -306,6 +350,7 @@ func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 
 func (k *GoKafka) ConsumerWithSettings(topic string, fn ConsumerFunc, cs ConsumerSettings) {
 	go func(topic string) {
+		tracer := otel.Tracer("")
 
 		kcs := &KafkaConsumerSettings{
 			Topic:           topic,
@@ -360,9 +405,21 @@ func (k *GoKafka) ConsumerWithSettings(topic string, fn ConsumerFunc, cs Consume
 				continue
 			}
 
-			ctx := context.Background()
+			carrier := kafkaHeaderCarrier{&msg.Headers}
+			ctx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+			ctx, span := tracer.Start(ctx, fmt.Sprintf("KAFKA SUB %s", topic),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+			)
+
 			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
+			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+			)
 			consumer.CommitMessage(msg)
+			span2.End()
+			span.End()
 		}
 
 	}(topic)

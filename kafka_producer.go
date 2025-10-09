@@ -9,12 +9,15 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/google/uuid"
-	"github.com/newrelic/go-agent/v3/newrelic"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type (
 	KafkaProducer struct {
-		kp *kafka.Producer
+		server string
+		kp     *kafka.Producer
 	}
 )
 
@@ -68,7 +71,8 @@ func NewKafkaProducer(k *GoKafka) Producer {
 	}()
 
 	return &KafkaProducer{
-		kp: kp,
+		kp:     kp,
+		server: k.server,
 	}
 }
 
@@ -78,10 +82,13 @@ type baseStruct struct {
 
 func (kp *KafkaProducer) Publish(ctx context.Context, tp string, msg any) error {
 
-	txn := newrelic.FromContext(ctx)
-	nrSegment := txn.StartSegment(tp)
-	nrSegment.AddAttribute("span.kind", "client")
-	defer nrSegment.End()
+	mCtx := getContext(ctx)
+	tracer := otel.Tracer("")
+	ctx, span := tracer.Start(mCtx, fmt.Sprintf("KAFKA PUB %s", tp),
+		trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+		trace.WithAttributes(attribute.String("messaging.destination.name", tp)),
+	)
+	defer span.End()
 
 	headers := helperContextKafka(ctx,
 		[]string{
@@ -108,6 +115,10 @@ func (kp *KafkaProducer) Publish(ctx context.Context, tp string, msg any) error 
 		}
 	}
 
+	kHeader := headers.ToKafkaHeader()
+	carrier := kafkaHeaderCarrier{&kHeader}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
 	delivery_chan := make(chan kafka.Event)
 	if err = kp.kp.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{
@@ -116,22 +127,29 @@ func (kp *KafkaProducer) Publish(ctx context.Context, tp string, msg any) error 
 			Offset:    kafka.OffsetEnd,
 		},
 		Value:   data,
-		Headers: headers.ToKafkaHeader(),
+		Headers: kHeader,
 		Key:     bId,
 	}, delivery_chan); err != nil {
+		span.RecordError(err)
 		fmt.Println(err.Error())
 		return err
 	}
+	span.AddEvent("Message sent successfully")
 	<-delivery_chan
 
 	return nil
 }
 
 func (kp *KafkaProducer) PublishWithKey(ctx context.Context, tp string, key []byte, msg any) error {
-	txn := newrelic.FromContext(ctx)
-	nrSegment := txn.StartSegment(tp)
-	nrSegment.AddAttribute("span.kind", "client")
-	defer nrSegment.End()
+
+	tracer := otel.Tracer("")
+	mCtx := getContext(ctx)
+	ctx, span := tracer.Start(mCtx, fmt.Sprintf("KAFKA PUB %s", tp),
+		trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+		trace.WithAttributes(attribute.String("messaging.destination.name", tp)),
+		trace.WithAttributes(attribute.String("messaging.kafka.message.key", string(key))),
+	)
+	defer span.End()
 
 	headers := helperContextKafka(ctx,
 		[]string{
@@ -147,6 +165,10 @@ func (kp *KafkaProducer) PublishWithKey(ctx context.Context, tp string, key []by
 		return err
 	}
 
+	kHeader := headers.ToKafkaHeader()
+	carrier := kafkaHeaderCarrier{&kHeader}
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
 	delivery_chan := make(chan kafka.Event)
 	if err = kp.kp.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{
@@ -155,12 +177,14 @@ func (kp *KafkaProducer) PublishWithKey(ctx context.Context, tp string, key []by
 			Offset:    kafka.OffsetEnd,
 		},
 		Value:   data,
-		Headers: headers.ToKafkaHeader(),
+		Headers: kHeader,
 		Key:     key,
 	}, delivery_chan); err != nil {
+		span.RecordError(err)
 		fmt.Println(err.Error())
 		return err
 	}
+	span.AddEvent("Message sent successfully")
 	<-delivery_chan
 
 	return nil

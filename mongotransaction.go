@@ -25,5 +25,5 @@ func (vuc *MongoTransaction) RunInTransaction(ctx context.Context, action func(m
 	}
 	defer session.EndSession(ctx)
 
-	return session.WithTransaction(ToContext(ctx), action)
+	return session.WithTransaction(getContext(ctx), action)
 }

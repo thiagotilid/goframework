@@ -2,24 +2,22 @@ package goframework
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/dig"
 )
 
@@ -28,6 +26,7 @@ type GoFramework struct {
 	configuration *viper.Viper
 	server        *gin.Engine
 	healthCheck   []func() (string, bool)
+	mainCtx       context.Context
 }
 
 type GoFrameworkOptions interface {
@@ -83,7 +82,6 @@ func AddTenant(v *viper.Viper) gin.HandlerFunc {
 
 func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 	location, err := time.LoadLocation("UTC")
-
 	if err != nil {
 		panic(err)
 	}
@@ -95,6 +93,7 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		configuration: initializeViper(),
 		server:        gin.Default(),
 		healthCheck:   make([]func() (string, bool), 0),
+		mainCtx:       context.Background(),
 	}
 
 	cconfig := cors.DefaultConfig()
@@ -113,6 +112,10 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 	gf.ioc.Invoke(func(v *viper.Viper) {
 		gf.server.Use(corsconfig, AddTenant(v))
 	})
+
+	setupOTelSDK(gf.mainCtx)
+
+	gf.server.Use(otelgin.Middleware("todo-service"))
 
 	gf.server.GET("/health", func(ctx *gin.Context) {
 
@@ -149,7 +152,7 @@ func initializeViper() *viper.Viper {
 }
 
 func (gf *GoFramework) GetConfig(key string) string {
-	return gf.configuration.GetString(key)
+	return strings.Join(gf.configuration.GetStringSlice(key), ",")
 }
 
 // DIG
@@ -180,6 +183,7 @@ func (gf *GoFramework) Start() error {
 	if port == "" {
 		port = "8081"
 	}
+
 	return gf.server.Run(":" + port)
 }
 
@@ -200,7 +204,7 @@ func (gf *GoFramework) RegisterDbMongo(host string, user string, pass string, da
 	}
 
 	err := gf.ioc.Provide(func() *mongo.Database {
-		cli, err := newMongoClient(opts, normalize)
+		cli, err := newMongoClient(gf.mainCtx, opts, normalize)
 		if err != nil {
 			return nil
 		}
@@ -228,39 +232,26 @@ func (gf *GoFramework) PingMongoClient(db *mongo.Database) error {
 }
 
 // Redis
-func (gf *GoFramework) RegisterRedis(address string, password string, db string) {
-
-	dbInt, err := strconv.Atoi(db)
+func (gf *GoFramework) RegisterRedis() {
+	settings := NewRedisSettings(gf.configuration)
+	err := gf.ioc.Provide(func() ICache { return NewRedisClient(settings) })
 	if err != nil {
 		log.Panic(err)
 	}
+}
 
-	opts := &redis.Options{
-		Addr:     address,
+func (gf *GoFramework) RegisterRedisWithSettings(addrs []string, password string, db int, client string, cluster bool) {
+
+	settings := &RedisSettings{
+		Addr:     addrs,
 		Password: password,
-		DB:       dbInt,
+		DB:       db,
+		Client:   client,
+		Ttl:      10 * time.Second,
+		Cluster:  cluster,
 	}
 
-	if opts.Addr != "" && opts.Addr != "localhost:6379" {
-		opts.TLSConfig = &tls.Config{
-			InsecureSkipVerify: true,
-		}
-	}
-
-	gf.healthCheck = append(gf.healthCheck, func() (string, bool) {
-		serviceName := "RDS"
-		cli := newRedisClient(opts)
-		if cli == nil {
-			return serviceName, false
-		}
-
-		if _, err := cli.Ping(context.Background()).Result(); err != nil {
-			return serviceName, false
-		}
-		return serviceName, true
-	})
-
-	err = gf.ioc.Provide(func() *redis.Client { return (newRedisClient(opts)) })
+	err := gf.ioc.Provide(func() ICache { return NewRedisClient(settings) })
 	if err != nil {
 		log.Panic(err)
 	}

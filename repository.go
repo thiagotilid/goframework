@@ -222,7 +222,7 @@ func (r *MongoDbRepository[T]) GetAllSkipTake(
 		if err != nil {
 			panic(err)
 		}
-		for cur.Next(ctx) {
+		for cur.Next(mCtx) {
 			var el T
 			err = cur.Decode(&el)
 			if err != nil {
