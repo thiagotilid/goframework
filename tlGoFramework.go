@@ -115,7 +115,9 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		gf.server.Use(corsconfig, AddTenant(v))
 	})
 
-	setupOTelSDK(gf.mainCtx)
+	if otel := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); len(otel) > 0 {
+		setupOTelSDK(gf.mainCtx)
+	}
 
 	gf.server.Use(otelgin.Middleware("todo-service"))
 

@@ -1,4 +1,4 @@
-module github.com/thiagotilid/goframework/v3
+module github.com/thiagotilid/goframework/v4
 
 go 1.24.0
 
