@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -27,6 +28,7 @@ type GoFramework struct {
 	ioc           *dig.Container
 	configuration *viper.Viper
 	server        *gin.Engine
+	routeRegister func() error
 	healthCheck   []func() (string, bool)
 }
 
@@ -180,6 +182,13 @@ func (gf *GoFramework) Start() error {
 	if port == "" {
 		port = "8081"
 	}
+
+	if gf.routeRegister != nil {
+		if err := gf.routeRegister(); err != nil {
+			panic(err)
+		}
+	}
+
 	return gf.server.Run(":" + port)
 }
 
@@ -208,6 +217,13 @@ func (gf *GoFramework) RegisterDbMongo(host string, user string, pass string, da
 	})
 
 	gf.ioc.Provide(NewMongoTransaction)
+
+	gf.routeRegister = func() error {
+		if err := gf.ioc.Invoke(gf.RegisterRoutes); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	gf.healthCheck = append(gf.healthCheck, func() (string, bool) {
 		serviceName := "MDB"
@@ -308,5 +324,41 @@ func (gf *GoFramework) RegisterKafkaConsumer(consumer interface{}) {
 	err := gf.ioc.Invoke(consumer)
 	if err != nil {
 		log.Panic(err)
+	}
+}
+
+// Register Routes On DB
+func (gf *GoFramework) RegisterRoutes(db *mongo.Database) {
+	coll := db.Client().Database("user").Collection("routes")
+
+	mod := os.Getenv("API_HOST")
+
+	if mod != "" {
+		opt := options.InsertOne()
+		opt.SetBypassDocumentValidation(true)
+
+		coll.DeleteMany(context.Background(), map[string]interface{}{"module": mod})
+
+		for _, r := range gf.server.Routes() {
+			data := NewRoute(r, mod)
+
+			bsonMap, err := MarshalWithRegistry(data)
+			if err != nil {
+				panic(err)
+			}
+
+			var bsonM bson.M
+			err = bson.Unmarshal(bsonMap, &bsonM)
+			if err != nil {
+				panic(err)
+			}
+
+			bsonM["active"] = true
+			bsonM["tenantId"] = uuid.Nil
+
+			if _, err = coll.InsertOne(context.Background(), bsonMap, opt); err != nil {
+				panic(err)
+			}
+		}
 	}
 }
