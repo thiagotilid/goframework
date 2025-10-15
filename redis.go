@@ -162,6 +162,11 @@ func (r *Redis) Publish(ctx context.Context, key string, obj any) error {
 	return nil
 }
 
+func (r *Redis) Subscribe(ctx context.Context, channels ...string) *redis.PubSub {
+	mCtx := getContext(ctx)
+	return r.client.Subscribe(mCtx, channels...)
+}
+
 func (r *Redis) Ping(ctx context.Context) error {
 	mCtx := getContext(ctx)
 	return r.client.Ping(mCtx).Err()
