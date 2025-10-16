@@ -84,7 +84,7 @@ func (kp *KafkaProducer) Publish(ctx context.Context, tp string, msg any) error 
 
 	mCtx := getContext(ctx)
 	tracer := otel.Tracer("")
-	ctx, span := tracer.Start(mCtx, fmt.Sprintf("KAFKA PUB %s", tp),
+	tctx, span := tracer.Start(mCtx, fmt.Sprintf("KAFKA PUB %s", tp),
 		trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 		trace.WithAttributes(attribute.String("messaging.destination.name", tp)),
 	)
@@ -117,7 +117,7 @@ func (kp *KafkaProducer) Publish(ctx context.Context, tp string, msg any) error 
 
 	kHeader := headers.ToKafkaHeader()
 	carrier := kafkaHeaderCarrier{&kHeader}
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	otel.GetTextMapPropagator().Inject(tctx, carrier)
 
 	delivery_chan := make(chan kafka.Event)
 	if err = kp.kp.Produce(&kafka.Message{
@@ -144,7 +144,7 @@ func (kp *KafkaProducer) PublishWithKey(ctx context.Context, tp string, key []by
 
 	tracer := otel.Tracer("")
 	mCtx := getContext(ctx)
-	ctx, span := tracer.Start(mCtx, fmt.Sprintf("KAFKA PUB %s", tp),
+	tctx, span := tracer.Start(mCtx, fmt.Sprintf("KAFKA PUB %s", tp),
 		trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 		trace.WithAttributes(attribute.String("messaging.destination.name", tp)),
 		trace.WithAttributes(attribute.String("messaging.kafka.message.key", string(key))),
@@ -167,7 +167,7 @@ func (kp *KafkaProducer) PublishWithKey(ctx context.Context, tp string, key []by
 
 	kHeader := headers.ToKafkaHeader()
 	carrier := kafkaHeaderCarrier{&kHeader}
-	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	otel.GetTextMapPropagator().Inject(tctx, carrier)
 
 	delivery_chan := make(chan kafka.Event)
 	if err = kp.kp.Produce(&kafka.Message{
