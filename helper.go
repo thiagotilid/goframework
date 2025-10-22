@@ -80,7 +80,6 @@ func GetContextHeader(c context.Context, keys ...string) string {
 }
 
 func getContext(c context.Context) context.Context {
-
 	switch c := c.(type) {
 	case *gin.Context:
 		return c.Request.Context()
@@ -185,13 +184,15 @@ func helperContextKafka(c context.Context, addfilter []string) *kHeader {
 func ToContext(c context.Context) context.Context {
 	listContext := []string{XTENANTID, XAUTHOR, XAUTHORID, XCORRELATIONID, TTENANTID, XCREATEDAT}
 
-	cc := context.Background()
+	cc := c
 	switch c := c.(type) {
 	case *gin.Context:
+		cc = c.Request.Context()
 		for _, v := range listContext {
 			cc = context.WithValue(cc, v, c.Request.Header.Get(v))
 		}
 	case *ConsumerContext:
+		cc = c.Context
 		for _, v := range listContext {
 			for _, kh := range c.Msg.Headers {
 				if kh.Key == v {
