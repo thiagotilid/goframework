@@ -14,7 +14,6 @@ type Route struct {
 	Method string
 	Path   string
 	Module string
-	Active bool
 }
 
 func NewRoute(r gin.RouteInfo, module string) *Route {
@@ -29,6 +28,5 @@ func NewRoute(r gin.RouteInfo, module string) *Route {
 		Method: r.Method,
 		Path:   path,
 		Module: module,
-		Active: true,
 	}
 }
