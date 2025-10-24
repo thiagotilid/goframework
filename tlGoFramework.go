@@ -346,7 +346,7 @@ func (gf *GoFramework) RegisterRoutes(db *mongo.Database) {
 			bsonM["active"] = true
 			bsonM["tenantId"] = uuid.Nil
 
-			if _, err = coll.InsertOne(context.Background(), bsonMap, opt); err != nil {
+			if _, err = coll.InsertOne(context.Background(), bsonM, opt); err != nil {
 				panic(err)
 			}
 		}
