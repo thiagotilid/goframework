@@ -47,7 +47,6 @@ func helperContext(c context.Context, filter map[string]interface{}, addfilter m
 			value := fmt.Sprint(c.Value(v))
 			if value != "" {
 				filter[k] = value
-				break
 			}
 		}
 	}
