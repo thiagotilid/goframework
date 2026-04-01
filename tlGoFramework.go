@@ -313,6 +313,11 @@ func (gf *GoFramework) RegisterKafka(server string,
 	if err != nil {
 		log.Panic(err)
 	}
+
+	err = gf.ioc.Provide(NewKafkaProducer)
+	if err != nil {
+		log.Panic(err)
+	}
 }
 
 // Kafka
