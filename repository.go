@@ -61,6 +61,31 @@ func (r *MongoDbRepository[T]) ChangeCollection(collectionName string) {
 	r.collection = r.db.Collection(collectionName)
 }
 
+func (r *MongoDbRepository[T]) appendCustomAttrToFilter(ctx context.Context, filter map[string]interface{}) {
+	attrs := GetCustomAttr(ctx)
+	for k, v := range attrs {
+		filter[k] = v
+	}
+}
+
+func (r *MongoDbRepository[T]) appendCustomAttrToFilterAgg(ctx context.Context, filterAggregator map[string][]interface{}) {
+	attrs := GetCustomAttr(ctx)
+	if len(attrs) == 0 {
+		return
+	}
+	for k, v := range attrs {
+		filterAggregator["$and"] = append(filterAggregator["$and"], bson.M{k: v})
+	}
+}
+
+func (r *MongoDbRepository[T]) appendCustomAttrToPipeline(ctx context.Context, matchFilter bson.D) bson.D {
+	attrs := GetCustomAttr(ctx)
+	for k, v := range attrs {
+		matchFilter = append(matchFilter, bson.E{Key: k, Value: v})
+	}
+	return matchFilter
+}
+
 func (r *MongoDbRepository[T]) appendTenantToFilterAgg(ctx context.Context, filterAggregator map[string][]interface{}) {
 	if tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID); tenantId != "" {
 		if tid, err := uuid.Parse(tenantId); err == nil {
@@ -100,33 +125,26 @@ func (r *MongoDbRepository[T]) appendTenantToFilterWithoutNil(ctx context.Contex
 
 func (r *MongoDbRepository[T]) appendTenantPipeline(ctx context.Context, pipeline bson.A) bson.A {
 	tenantId := GetContextHeader(ctx, XTENANTID, TTENANTID)
-	var filter bson.A
+	var matchFilter bson.D
 	if tid, err := uuid.Parse(tenantId); err == nil {
-		filter = bson.A{
-			bson.D{
-				{Key: "$match",
-					Value: bson.D{
-						{Key: "$or",
-							Value: bson.A{
-								bson.M{"tenantId": uuid.Nil},
-								bson.M{"tenantId": tid},
-							},
-						},
-						{Key: "active", Value: true},
-					},
+		matchFilter = bson.D{
+			{Key: "$or",
+				Value: bson.A{
+					bson.M{"tenantId": uuid.Nil},
+					bson.M{"tenantId": tid},
 				},
 			},
+			{Key: "active", Value: true},
 		}
 	} else {
-		filter = bson.A{
-			bson.D{
-				{Key: "$match",
-					Value: bson.M{"active": true},
-				},
-			},
+		matchFilter = bson.D{
+			{Key: "active", Value: true},
 		}
 	}
 
+	matchFilter = r.appendCustomAttrToPipeline(ctx, matchFilter)
+
+	filter := bson.A{bson.D{{Key: "$match", Value: matchFilter}}}
 	filter = append(filter, pipeline...)
 
 	return filter
@@ -149,6 +167,11 @@ func (r *MongoDbRepository[T]) appendMatchParams(ctx context.Context, pipeline b
 		}
 	}
 
+	attrs := GetCustomAttr(ctx)
+	for k, v := range attrs {
+		def[k] = v
+	}
+
 	pipeline[0] = bson.D{{Key: "$match", Value: bson.D{{Key: "$and", Value: []interface{}{def, match}}}}}
 
 	return pipeline, nil
@@ -163,6 +186,7 @@ func (r *MongoDbRepository[T]) GetAll(
 	filterAggregator["$and"] = append(filterAggregator["$and"], filter, bson.M{"active": true})
 
 	r.appendTenantToFilterAgg(ctx, filterAggregator)
+	r.appendCustomAttrToFilterAgg(ctx, filterAggregator)
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filterAggregator)
 		fmt.Print(bson.Raw(obj), err)
@@ -197,6 +221,7 @@ func (r *MongoDbRepository[T]) GetAllSkipTake(
 	filterAggregator := make(map[string][]interface{})
 	filterAggregator["$and"] = append(filterAggregator["$and"], filter, bson.M{"active": true})
 	r.appendTenantToFilterAgg(ctx, filterAggregator)
+	r.appendCustomAttrToFilterAgg(ctx, filterAggregator)
 
 	opts := make([]*options.FindOptions, 0)
 
@@ -241,6 +266,7 @@ func (r *MongoDbRepository[T]) GetFirst(
 	var el T
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -278,6 +304,13 @@ func (r *MongoDbRepository[T]) insertDefaultParam(ctx context.Context, entity *T
 		}
 	}
 
+	attrs := GetCustomAttr(ctx)
+	for k, v := range attrs {
+		if checkNestedFieldExists(bsonM, k) {
+			setNestedField(bsonM, k, v)
+		}
+	}
+
 	var history = make(map[string]interface{})
 	history["ActionAt"] = time.Now()
 	helperContext(ctx, history, map[string]string{"author": XAUTHOR, "authorId": XAUTHORID})
@@ -309,6 +342,13 @@ func (r *MongoDbRepository[T]) replaceDefaultParam(ctx context.Context, old bson
 	bsonM["created"] = old["created"]
 	bsonM["updated"] = history
 	bsonM["active"] = old["active"]
+
+	attrs := GetCustomAttr(ctx)
+	for k, v := range attrs {
+		if checkNestedFieldExists(bsonM, k) {
+			setNestedField(bsonM, k, v)
+		}
+	}
 
 	return bsonM, nil
 }
@@ -434,6 +474,7 @@ func (r *MongoDbRepository[T]) Replace(
 	entity *T) error {
 
 	r.appendTenantToFilterWithoutNil(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -470,6 +511,7 @@ func (r *MongoDbRepository[T]) Update(
 	fields interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	setBson, err := r.updateDefaultParam(ctx, fields)
 	if err != nil {
@@ -506,6 +548,7 @@ func (r *MongoDbRepository[T]) FindOneAndUpdate(
 			filter["tenantId"] = tid
 		}
 	}
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	setBson, err := r.updateDefaultParam(ctx, fields)
 	if err != nil {
@@ -540,6 +583,7 @@ func (r *MongoDbRepository[T]) UpdateMany(
 	fields interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	setBson, err := r.updateDefaultParam(ctx, fields)
 	if err != nil {
@@ -570,6 +614,7 @@ func (r *MongoDbRepository[T]) Push(
 	fields interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	updt, err := r.pushDefaultParam(ctx, fields)
 	if err != nil {
@@ -599,6 +644,7 @@ func (r *MongoDbRepository[T]) PushMany(
 	fields interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	updt, err := r.pushDefaultParam(ctx, fields)
 	if err != nil {
@@ -628,6 +674,7 @@ func (r *MongoDbRepository[T]) Pull(
 	fields interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	updt, err := r.pullDefaultParam(ctx, fields)
 	if err != nil {
@@ -657,6 +704,7 @@ func (r *MongoDbRepository[T]) PullMany(
 	fields interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	updt, err := r.pullDefaultParam(ctx, fields)
 	if err != nil {
@@ -685,6 +733,7 @@ func (r *MongoDbRepository[T]) Delete(
 	filter map[string]interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -710,6 +759,7 @@ func (r *MongoDbRepository[T]) DeleteMany(
 	filter map[string]interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -772,6 +822,7 @@ func (r *MongoDbRepository[T]) Unlock(
 	id interface{}) error {
 	key := map[string]interface{}{"_id": id, LOKED: true}
 	r.appendTenantToFilter(ctx, key)
+	r.appendCustomAttrToFilter(ctx, key)
 	rand_await()
 	if _, err := r.collection.UpdateOne(ctx, key, UNLOCK); err != nil && err != mongo.ErrNoDocuments {
 		return err
@@ -784,6 +835,7 @@ func (r *MongoDbRepository[T]) GetLock(
 	id interface{}) (*T, error) {
 	key := map[string]interface{}{"_id": id}
 	r.appendTenantToFilter(ctx, key)
+	r.appendCustomAttrToFilter(ctx, key)
 	var t T
 	rand_await()
 	if err := r.lock(ctx, key, time.Now()); err != nil {
@@ -800,6 +852,7 @@ func (r *MongoDbRepository[T]) DeleteForce(
 	filter map[string]interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -824,6 +877,7 @@ func (r *MongoDbRepository[T]) DeleteManyForce(
 	filter map[string]interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
+	r.appendCustomAttrToFilter(ctx, filter)
 
 	if os.Getenv("env") == "local" {
 		_, obj, err := bson.MarshalValue(filter)
@@ -883,6 +937,7 @@ func (r *MongoDbRepository[T]) Count(ctx context.Context,
 	filterAggregator["$and"] = append(filterAggregator["$and"], filter)
 
 	r.appendTenantToFilterAgg(ctx, filterAggregator)
+	r.appendCustomAttrToFilterAgg(ctx, filterAggregator)
 	filterAggregator["$and"] = append(filterAggregator["$and"], bson.M{"active": true})
 
 	if os.Getenv("env") == "local" {

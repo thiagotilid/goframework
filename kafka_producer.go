@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -97,6 +97,7 @@ func (kp *KafkaProducer) Publish(ctx context.Context, tp string, msg any) error 
 			XAUTHORID,
 			XCORRELATIONID,
 			XCREATEDAT,
+			XCUSTOMATTR,
 		})
 
 	data, err := json.Marshal(msg)
@@ -158,6 +159,7 @@ func (kp *KafkaProducer) PublishWithKey(ctx context.Context, tp string, key []by
 			XAUTHORID,
 			XCORRELATIONID,
 			XCREATEDAT,
+			XCUSTOMATTR,
 		})
 
 	data, err := json.Marshal(msg)

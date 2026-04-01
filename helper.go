@@ -3,11 +3,12 @@ package goframework
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 
@@ -24,7 +25,8 @@ const (
 	XCORRELATIONID string = "X-Correlation-Id"
 	XCREATEDAT     string = "X-CreatedAt"
 
-	B2B2C string = "assistancecompanies"
+	B2B2C      string = "assistancecompanies"
+	XCUSTOMATTR string = "X-Custom-Attr"
 )
 
 func helperContext(c context.Context, filter map[string]interface{}, addfilter map[string]string) {
@@ -182,7 +184,7 @@ func helperContextKafka(c context.Context, addfilter []string) *kHeader {
 }
 
 func ToContext(c context.Context) context.Context {
-	listContext := []string{XTENANTID, XAUTHOR, XAUTHORID, XCORRELATIONID, TTENANTID, XCREATEDAT}
+	listContext := []string{XTENANTID, XAUTHOR, XAUTHORID, XCORRELATIONID, TTENANTID, XCREATEDAT, XCUSTOMATTR}
 
 	cc := c
 	switch c := c.(type) {
@@ -217,6 +219,61 @@ func AddToContext(c context.Context, key string, value string) {
 		c.Msg.Headers = append(c.Msg.Headers, kafka.Header{Key: key, Value: []byte(value)})
 	default:
 		c = context.WithValue(c, key, value)
+	}
+}
+
+func GetCustomAttr(ctx context.Context) map[string]string {
+	raw := GetContextHeader(ctx, XCUSTOMATTR)
+	if raw == "" {
+		return nil
+	}
+	var attrs map[string]string
+	if err := json.Unmarshal([]byte(raw), &attrs); err != nil {
+		return nil
+	}
+	if len(attrs) == 0 {
+		return nil
+	}
+	return attrs
+}
+
+func checkNestedFieldExists(doc bson.M, dotKey string) bool {
+	parts := strings.Split(dotKey, ".")
+	current := map[string]interface{}(doc)
+	for _, part := range parts {
+		val, ok := current[part]
+		if !ok {
+			return false
+		}
+		if nested, ok := val.(bson.M); ok {
+			current = map[string]interface{}(nested)
+		} else if nested, ok := val.(map[string]interface{}); ok {
+			current = nested
+		} else {
+			if part == parts[len(parts)-1] {
+				return true
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func setNestedField(doc bson.M, dotKey string, value string) {
+	parts := strings.Split(dotKey, ".")
+	current := map[string]interface{}(doc)
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			current[part] = value
+			return
+		}
+		if nested, ok := current[part].(bson.M); ok {
+			current = map[string]interface{}(nested)
+		} else if nested, ok := current[part].(map[string]interface{}); ok {
+			current = nested
+		} else {
+			return
+		}
 	}
 }
 

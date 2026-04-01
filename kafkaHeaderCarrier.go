@@ -1,6 +1,6 @@
 package goframework
 
-import "github.com/confluentinc/confluent-kafka-go/kafka"
+import "github.com/confluentinc/confluent-kafka-go/v2/kafka"
 
 // kafkaHeaderCarrier implementa propagation.TextMapCarrier
 type kafkaHeaderCarrier struct {

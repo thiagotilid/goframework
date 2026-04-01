@@ -2,6 +2,7 @@ package goframework
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -71,6 +72,16 @@ func AddTenant(v *viper.Viper) gin.HandlerFunc {
 			}
 
 			ctx.Request.Header.Add(XTENANTID, fmt.Sprint(claims[TTENANTID]))
+
+			if customAttr, ok := claims["custom_attr"].(map[string]interface{}); ok && len(customAttr) > 0 {
+				strMap := make(map[string]string, len(customAttr))
+				for k, v := range customAttr {
+					strMap[k] = fmt.Sprint(v)
+				}
+				if data, err := json.Marshal(strMap); err == nil {
+					ctx.Request.Header.Add(XCUSTOMATTR, string(data))
+				}
+			}
 		}
 
 		sourcename := v.GetString("kafka.groupid")
