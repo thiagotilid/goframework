@@ -67,7 +67,7 @@ func recover_error(fn func(error)) {
 func kafkaCallFnWithResilence(
 	ctx context.Context,
 	msg *kafka.Message,
-	kcm *kafka.ConfigMap,
+	pcm *kafka.ConfigMap,
 	kcs KafkaConsumerSettings,
 	fn ConsumerFunc) {
 
@@ -81,10 +81,10 @@ func kafkaCallFnWithResilence(
 		fmt.Println(err.Error())
 		if kcs.Retries > 1 {
 			kcs.Retries--
-			kafkaCallFnWithResilence(ctx, msg, kcm, kcs, fn)
+			kafkaCallFnWithResilence(ctx, msg, pcm, kcs, fn)
 			return
 		}
-		kafkaSendToDlq(cctx, kcm, msg, err, debug.Stack())
+		kafkaSendToDlq(cctx, pcm, msg, err, debug.Stack())
 	})
 	fn(cctx)
 }
@@ -98,11 +98,11 @@ type consumerError struct {
 
 func kafkaSendToDlq(
 	ctx context.Context,
-	kcm *kafka.ConfigMap,
+	pcm *kafka.ConfigMap,
 	msg *kafka.Message,
 	er error,
 	stack []byte) {
-	p, err := kafka.NewProducer(kcm)
+	p, err := kafka.NewProducer(pcm)
 	if err != nil {
 		panic(err)
 	}
@@ -111,13 +111,13 @@ func kafkaSendToDlq(
 	emsg := *msg
 	tpn := *emsg.TopicPartition.Topic + "_error"
 
-	CreateKafkaTopic(ctx, kcm, &TopicConfiguration{
+	CreateKafkaTopic(ctx, pcm, &TopicConfiguration{
 		Topic:             tpn,
 		NumPartitions:     1,
 		ReplicationFactor: 1,
 	})
 
-	v, _ := kcm.Get("group.id", "")
+	v, _ := pcm.Get("group.id", "")
 
 	var content map[string]interface{}
 	if err := json.Unmarshal(emsg.Value, &content); err != nil {

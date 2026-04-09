@@ -32,6 +32,25 @@ type (
 	}
 )
 
+func (k *GoKafka) producerConfigMap() *kafka.ConfigMap {
+	pcm := &kafka.ConfigMap{
+		"bootstrap.servers": k.server,
+	}
+	if len(k.securityprotocol) > 0 {
+		pcm.SetKey("security.protocol", k.securityprotocol)
+	}
+	if len(k.saslmechanism) > 0 {
+		pcm.SetKey("sasl.mechanism", k.saslmechanism)
+	}
+	if len(k.saslusername) > 0 {
+		pcm.SetKey("sasl.username", k.saslusername)
+	}
+	if len(k.saslpassword) > 0 {
+		pcm.SetKey("sasl.password", k.saslpassword)
+	}
+	return pcm
+}
+
 func NewKafkaConfigMap(connectionString string,
 	groupId string,
 	securityprotocol string,
@@ -82,14 +101,14 @@ type (
 	}
 )
 
-func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka.Consumer, fn ConsumerFunc, kc *kafka.ConfigMap, kcs *KafkaConsumerSettings, done chan<- struct{}) {
+func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka.Consumer, fn ConsumerFunc, pcm *kafka.ConfigMap, kcs *KafkaConsumerSettings, done chan<- struct{}) {
 	tracer := otel.Tracer("")
 
 	for msg := range messages {
 		log.Printf("[Worker %d] Processando mensagem: %s", id, string(msg.Value))
 		func(cmsg *kafka.Message,
 			cconsumer *kafka.Consumer,
-			ckc *kafka.ConfigMap,
+			cpcm *kafka.ConfigMap,
 			ckcs KafkaConsumerSettings,
 			cfn ConsumerFunc) {
 			defer recover_all()
@@ -101,7 +120,7 @@ func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka
 				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 				trace.WithAttributes(attribute.String("messaging.destination.name", kcs.Topic)),
 			)
-			kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
+			kafkaCallFnWithResilence(ctx, cmsg, cpcm, ckcs, cfn)
 			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
 				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 				trace.WithAttributes(attribute.String("messaging.destination.name", kcs.Topic)),
@@ -111,7 +130,7 @@ func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka
 			span.End()
 			<-messages
 
-		}(msg, consumer, kc, *kcs, fn)
+		}(msg, consumer, pcm, *kcs, fn)
 	}
 	done <- struct{}{}
 }
@@ -165,8 +184,9 @@ func (k *GoKafka) ConsumerWithWorker(topic string,
 			panic(err)
 		}
 
+		pcm := k.producerConfigMap()
 		for i := 0; i < cfg.Routines; i++ {
-			go k.worker(i, messages, consumer, fn, kc, kcs, done)
+			go k.worker(i, messages, consumer, fn, pcm, kcs, done)
 		}
 
 		for {
@@ -230,6 +250,7 @@ func (k *GoKafka) ConsumerMultiRoutine(
 			log.Fatalln(err.Error())
 			panic(err)
 		}
+		pcm := k.producerConfigMap()
 		r := 0
 		ptr_r := &r
 		for {
@@ -241,7 +262,7 @@ func (k *GoKafka) ConsumerMultiRoutine(
 			*ptr_r++
 			go func(cmsg *kafka.Message,
 				cconsumer *kafka.Consumer,
-				ckc *kafka.ConfigMap,
+				cpcm *kafka.ConfigMap,
 				ckcs KafkaConsumerSettings,
 				cfn ConsumerFunc) {
 				defer recover_all()
@@ -255,7 +276,7 @@ func (k *GoKafka) ConsumerMultiRoutine(
 					trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 					trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
 				)
-				kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
+				kafkaCallFnWithResilence(ctx, cmsg, cpcm, ckcs, cfn)
 				_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
 					trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 					trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
@@ -263,7 +284,7 @@ func (k *GoKafka) ConsumerMultiRoutine(
 				consumer.CommitMessage(msg)
 				span2.End()
 				span.End()
-			}(msg, consumer, kc, *kcs, fn)
+			}(msg, consumer, pcm, *kcs, fn)
 			wait_until(func() bool {
 				return *ptr_r >= cfg.Routines
 			})
@@ -321,6 +342,7 @@ func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 			panic(err)
 		}
 
+		pcm := k.producerConfigMap()
 		for {
 			msg, err := consumer.ReadMessage(-1)
 			if err != nil {
@@ -334,7 +356,7 @@ func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
 			)
-			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
+			kafkaCallFnWithResilence(ctx, msg, pcm, *kcs, fn)
 
 			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
 				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
@@ -398,6 +420,7 @@ func (k *GoKafka) ConsumerWithSettings(topic string, fn ConsumerFunc, cs Consume
 			panic(err)
 		}
 
+		pcm := k.producerConfigMap()
 		for {
 			msg, err := consumer.ReadMessage(-1)
 			if err != nil {
@@ -412,7 +435,7 @@ func (k *GoKafka) ConsumerWithSettings(topic string, fn ConsumerFunc, cs Consume
 				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
 			)
 
-			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
+			kafkaCallFnWithResilence(ctx, msg, pcm, *kcs, fn)
 			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
 				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
