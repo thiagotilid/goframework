@@ -123,6 +123,12 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 	gf.ioc.Provide(newLog)
 
 	gf.ioc.Invoke(func(v *viper.Viper) {
+		if key := v.GetString("crypto.key"); len(key) > 0 {
+			gf.ioc.Provide(NewUtils)
+		}
+	})
+
+	gf.ioc.Invoke(func(v *viper.Viper) {
 		gf.server.Use(corsconfig, AddTenant(v))
 	})
 
