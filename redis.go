@@ -99,7 +99,7 @@ func NewDefaultClient(rs *RedisSettings) *redis.Client {
 		Addr:            rs.Addr[0],
 		Password:        rs.Password,
 		DB:              rs.DB,
-		ConnMaxIdleTime: 30,
+		ConnMaxIdleTime: 30 * time.Second,
 	})
 }
 
