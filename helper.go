@@ -234,7 +234,18 @@ func GetCustomAttr(ctx context.Context) map[string]string {
 	if len(attrs) == 0 {
 		return nil
 	}
-	return attrs
+	if len(globalCustomAttrMap) == 0 {
+		return attrs
+	}
+	mapped := make(map[string]string, len(attrs))
+	for k, v := range attrs {
+		if replacement, ok := globalCustomAttrMap[k]; ok {
+			mapped[replacement] = v
+		} else {
+			mapped[k] = v
+		}
+	}
+	return mapped
 }
 
 func checkNestedFieldExists(doc bson.M, dotKey string) bool {

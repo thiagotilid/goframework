@@ -24,12 +24,18 @@ import (
 )
 
 type GoFramework struct {
-	ioc           *dig.Container
-	configuration *viper.Viper
-	server        *gin.Engine
-	routeRegister func() error
-	healthCheck   []func() (string, bool)
-	mainCtx       context.Context
+	ioc             *dig.Container
+	configuration   *viper.Viper
+	server          *gin.Engine
+	routeRegister   func() error
+	healthCheck     []func() (string, bool)
+	mainCtx         context.Context
+}
+
+var globalCustomAttrMap map[string]string
+
+func (gf *GoFramework) RegisterCustomAttrMap(m map[string]string) {
+	globalCustomAttrMap = m
 }
 
 type GoFrameworkOptions interface {
