@@ -41,7 +41,6 @@ func helperContext(c context.Context, filter map[string]interface{}, addfilter m
 			for _, kh := range c.Msg.Headers {
 				if kh.Key == v {
 					filter[k] = string(kh.Value)
-					break
 				}
 			}
 		}
@@ -50,7 +49,6 @@ func helperContext(c context.Context, filter map[string]interface{}, addfilter m
 			value := fmt.Sprint(c.Value(v))
 			if value != "" {
 				filter[k] = value
-				break
 			}
 		}
 	}
