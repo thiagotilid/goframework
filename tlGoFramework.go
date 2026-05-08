@@ -19,6 +19,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/dig"
 )
 
@@ -29,6 +31,7 @@ type GoFramework struct {
 	routeRegister func() error
 	healthCheck   []func() (string, bool)
 	mainCtx       context.Context
+	otelShutdown  func(context.Context) error
 }
 
 type GoFrameworkOptions interface {
@@ -45,6 +48,9 @@ func AddTenant(v *viper.Viper) gin.HandlerFunc {
 			}
 		}
 		ctx.Request.Header.Add(XCORRELATIONID, correlation.String())
+		trace.SpanFromContext(ctx.Request.Context()).SetAttributes(
+			attribute.String("correlation.id", correlation.String()),
+		)
 
 		createdat := time.Now().Format(time.RFC3339)
 		if ctxCreatedat := GetContextHeader(ctx, XCREATEDAT); ctxCreatedat != "" {
@@ -115,11 +121,18 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		gf.server.Use(corsconfig, AddTenant(v))
 	})
 
-	if otel := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); len(otel) > 0 {
-		setupOTelSDK(gf.mainCtx)
+	serviceName := os.Getenv("OTEL_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName, _ = os.Hostname()
 	}
 
-	gf.server.Use(otelgin.Middleware("todo-service"))
+	if otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"); len(otelEndpoint) > 0 {
+		if shutdown, err := setupOTelSDK(gf.mainCtx); err == nil {
+			gf.otelShutdown = shutdown
+		}
+	}
+
+	gf.server.Use(otelgin.Middleware(serviceName), metricsMiddleware())
 
 	gf.server.GET("/health", func(ctx *gin.Context) {
 
@@ -194,7 +207,15 @@ func (gf *GoFramework) Start() error {
 		}
 	}
 
-	return gf.server.Run(":" + port)
+	err := gf.server.Run(":" + port)
+
+	if gf.otelShutdown != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		gf.otelShutdown(shutdownCtx)
+	}
+
+	return err
 }
 
 func (gf *GoFramework) Invoke(function interface{}) {
