@@ -133,7 +133,7 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		}
 	}
 
-	gf.server.Use(otelgin.Middleware(serviceName), metricsMiddleware())
+	gf.server.Use(otelgin.Middleware(serviceName))
 
 	gf.server.GET("/health", func(ctx *gin.Context) {
 
