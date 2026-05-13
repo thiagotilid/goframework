@@ -116,6 +116,7 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 
 	gf.ioc.Provide(initializeViper)
 	gf.ioc.Provide(newLog)
+	gf.ioc.Provide(func() *log.Logger { return log.Default() })
 
 	gf.ioc.Invoke(func(v *viper.Viper) {
 		gf.server.Use(corsconfig, AddTenant(v))
