@@ -2,25 +2,17 @@ package goframework
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel/trace"
 )
 
 func RestRequest(ctx context.Context, method, url string, body io.Reader, headers ...map[string]string) (*http.Response, error) {
-	span := trace.SpanFromContext(ctx)
-	sc := span.SpanContext()
-	fmt.Printf("[RestRequest DEBUG] url=%s valid=%v traceID=%s spanID=%s remote=%v sampled=%v\n",
-		url,
-		sc.IsValid(),
-		sc.TraceID().String(),
-		sc.SpanID().String(),
-		sc.IsRemote(),
-		sc.IsSampled(),
-	)
+	if gc, ok := ctx.(*gin.Context); ok {
+		ctx = gc.Request.Context()
+	}
 
 	client := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport, otelhttp.WithSpanNameFormatter(func(operation string, r *http.Request) string {
