@@ -16,7 +16,7 @@ func RestRequest(ctx context.Context, method, url string, body io.Reader, header
 
 	client := &http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport, otelhttp.WithSpanNameFormatter(func(operation string, r *http.Request) string {
-			return "HTTP " + r.Method + " " + r.URL.Host + r.URL.Path
+			return "HTTP " + r.Method
 		})),
 	}
 

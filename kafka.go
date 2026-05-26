@@ -86,7 +86,6 @@ func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka
 	tracer := otel.Tracer("")
 
 	for msg := range messages {
-		log.Printf("[Worker %d] Processando mensagem: %s", id, string(msg.Value))
 		func(cmsg *kafka.Message,
 			cconsumer *kafka.Consumer,
 			ckc *kafka.ConfigMap,
@@ -102,9 +101,10 @@ func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka
 				trace.WithAttributes(attribute.String("messaging.destination.name", kcs.Topic)),
 			)
 			kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
-			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
+			_, span2 := tracer.Start(ctx, "KAFKA COMMIT",
 				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 				trace.WithAttributes(attribute.String("messaging.destination.name", kcs.Topic)),
+				trace.WithAttributes(attribute.String("messaging.message.id", string(msg.Key))),
 			)
 			consumer.CommitMessage(msg)
 			span2.End()
@@ -256,9 +256,10 @@ func (k *GoKafka) ConsumerMultiRoutine(
 					trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
 				)
 				kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
-				_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
+				_, span2 := tracer.Start(ctx, "KAFKA COMMIT",
 					trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 					trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+					trace.WithAttributes(attribute.String("messaging.message.id", string(msg.Key))),
 				)
 				consumer.CommitMessage(msg)
 				span2.End()
@@ -336,9 +337,10 @@ func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 			)
 			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
 
-			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
+			_, span2 := tracer.Start(ctx, "KAFKA COMMIT",
 				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+				trace.WithAttributes(attribute.String("messaging.message.id", string(msg.Key))),
 			)
 			consumer.CommitMessage(msg)
 			span2.End()
@@ -413,9 +415,10 @@ func (k *GoKafka) ConsumerWithSettings(topic string, fn ConsumerFunc, cs Consume
 			)
 
 			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
-			_, span2 := tracer.Start(ctx, fmt.Sprintf("KAFKA COMMIT MSG %s", msg.Key),
+			_, span2 := tracer.Start(ctx, "KAFKA COMMIT",
 				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
 				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+				trace.WithAttributes(attribute.String("messaging.message.id", string(msg.Key))),
 			)
 			consumer.CommitMessage(msg)
 			span2.End()

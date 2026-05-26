@@ -163,11 +163,6 @@ func (r *MongoDbRepository[T]) GetAll(
 	filterAggregator["$and"] = append(filterAggregator["$and"], filter, bson.M{"active": true})
 
 	r.appendTenantToFilterAgg(ctx, filterAggregator)
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filterAggregator)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	cur, err := r.collection.Find(getContext(ctx), filterAggregator, optsFind...)
 	if err != nil {
 		panic(err)
@@ -207,11 +202,6 @@ func (r *MongoDbRepository[T]) GetAllSkipTake(
 	opts = append(opts, op)
 	opts = append(opts, optsFind...)
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filterAggregator)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	mCtx := getContext(ctx)
 
 	result.Total, _ = r.collection.CountDocuments(mCtx, filterAggregator)
@@ -241,11 +231,6 @@ func (r *MongoDbRepository[T]) GetFirst(
 	var el T
 
 	r.appendTenantToFilter(ctx, filter)
-
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj), err)
-	}
 
 	err := r.collection.FindOne(getContext(ctx), filter).Decode(&el)
 
@@ -435,11 +420,6 @@ func (r *MongoDbRepository[T]) Replace(
 
 	r.appendTenantToFilterWithoutNil(ctx, filter)
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	var el bson.M
 	err := r.collection.FindOne(getContext(ctx), filter).Decode(&el)
 
@@ -476,11 +456,6 @@ func (r *MongoDbRepository[T]) Update(
 		return err
 	}
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	payload := make(map[string]interface{})
 	payload["$set"] = setBson
 	re, err := r.collection.UpdateOne(getContext(ctx), filter, payload)
@@ -512,11 +487,6 @@ func (r *MongoDbRepository[T]) FindOneAndUpdate(
 		return nil, err
 	}
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(fields)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	re := r.collection.FindOneAndUpdate(getContext(ctx),
 		filter, setBson, options.FindOneAndUpdate().SetReturnDocument(options.After))
 
@@ -546,11 +516,6 @@ func (r *MongoDbRepository[T]) UpdateMany(
 		return err
 	}
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(fields)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	re, err := r.collection.UpdateMany(getContext(ctx), filter, map[string]interface{}{"$set": setBson})
 
 	if err != nil {
@@ -574,11 +539,6 @@ func (r *MongoDbRepository[T]) Push(
 	updt, err := r.pushDefaultParam(ctx, fields)
 	if err != nil {
 		return err
-	}
-
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(fields)
-		fmt.Print(bson.Raw(obj), err)
 	}
 
 	re, err := r.collection.UpdateOne(getContext(ctx), filter, updt)
@@ -605,11 +565,6 @@ func (r *MongoDbRepository[T]) PushMany(
 		return err
 	}
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(fields)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	re, err := r.collection.UpdateMany(getContext(ctx), filter, updt)
 	if err != nil {
 		return err
@@ -632,11 +587,6 @@ func (r *MongoDbRepository[T]) Pull(
 	updt, err := r.pullDefaultParam(ctx, fields)
 	if err != nil {
 		return err
-	}
-
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(fields)
-		fmt.Print(bson.Raw(obj), err)
 	}
 
 	re, err := r.collection.UpdateOne(getContext(ctx), filter, updt)
@@ -663,11 +613,6 @@ func (r *MongoDbRepository[T]) PullMany(
 		return err
 	}
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(fields)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	re, err := r.collection.UpdateMany(getContext(ctx), filter, updt)
 	if err != nil {
 		return err
@@ -685,11 +630,6 @@ func (r *MongoDbRepository[T]) Delete(
 	filter map[string]interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
-
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj), err)
-	}
 
 	setBson := bson.M{"active": false}
 	re, err := r.collection.UpdateOne(getContext(ctx), filter, map[string]interface{}{"$set": setBson})
@@ -710,11 +650,6 @@ func (r *MongoDbRepository[T]) DeleteMany(
 	filter map[string]interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
-
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj), err)
-	}
 
 	setBson := bson.M{"active": false}
 	re, err := r.collection.UpdateMany(getContext(ctx), filter, map[string]interface{}{"$set": setBson})
@@ -801,11 +736,6 @@ func (r *MongoDbRepository[T]) DeleteForce(
 
 	r.appendTenantToFilter(ctx, filter)
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj), err)
-	}
-
 	_, err := r.collection.DeleteOne(getContext(ctx), filter)
 
 	if err == mongo.ErrNoDocuments {
@@ -824,11 +754,6 @@ func (r *MongoDbRepository[T]) DeleteManyForce(
 	filter map[string]interface{}) error {
 
 	r.appendTenantToFilter(ctx, filter)
-
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Print(bson.Raw(obj), err)
-	}
 
 	_, err := r.collection.DeleteMany(getContext(ctx), filter)
 
@@ -860,20 +785,10 @@ func (r *MongoDbRepository[T]) Aggregate(ctx context.Context, pipeline bson.A) (
 		filter = r.appendTenantPipeline(ctx, pipeline)
 	}
 
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Println(bson.Raw(obj), err)
-	}
-
 	return r.collection.Aggregate(ctx, filter)
 }
 
 func (r *MongoDbRepository[T]) DefaultAggregate(ctx context.Context, filter bson.A) (*mongo.Cursor, error) {
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filter)
-		fmt.Println(bson.Raw(obj), err)
-	}
-
 	return r.collection.Aggregate(ctx, filter)
 }
 
@@ -884,11 +799,6 @@ func (r *MongoDbRepository[T]) Count(ctx context.Context,
 
 	r.appendTenantToFilterAgg(ctx, filterAggregator)
 	filterAggregator["$and"] = append(filterAggregator["$and"], bson.M{"active": true})
-
-	if os.Getenv("env") == "local" {
-		_, obj, err := bson.MarshalValue(filterAggregator)
-		fmt.Print(bson.Raw(obj), err)
-	}
 
 	count, err := r.collection.CountDocuments(getContext(ctx), filterAggregator, optsFind...)
 	if err != nil {
