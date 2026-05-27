@@ -68,6 +68,7 @@ func AddTenant(v *viper.Viper) gin.HandlerFunc {
 		token, _, err := new(jwt.Parser).ParseUnverified(tokenString, jwt.MapClaims{})
 		if err != nil {
 			ctx.AbortWithStatus(http.StatusUnauthorized)
+			return
 		}
 
 		if claims, ok := token.Claims.(jwt.MapClaims); ok {

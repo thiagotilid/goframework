@@ -56,18 +56,18 @@ func NewKafkaProducer(k *GoKafka) Producer {
 	}
 
 	go func() {
+		defer kp.Close()
 		for e := range kp.Events() {
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					log.Fatalf("Failed to deliver message: %v\n", ev.TopicPartition)
-				} else {
-					log.Printf("Successfully produced record to topic %s partition [%d] @ offset %v\n",
-						*ev.TopicPartition.Topic, ev.TopicPartition.Partition, ev.TopicPartition.Offset)
+					log.Printf("kafka delivery failed: topic=%s partition=%d err=%v",
+						*ev.TopicPartition.Topic, ev.TopicPartition.Partition, ev.TopicPartition.Error)
 				}
+			case kafka.Error:
+				log.Printf("kafka client error: code=%v %v", ev.Code(), ev)
 			}
 		}
-		defer kp.Close()
 	}()
 
 	return &KafkaProducer{
