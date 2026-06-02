@@ -2,7 +2,6 @@ package goframework
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -10,7 +9,10 @@ import (
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type (
@@ -23,8 +25,6 @@ type (
 	GoKafka struct {
 		server           string
 		groupId          string
-		monitoring       *Monitoring
-		nrapp            GfAgentTelemetry
 		securityprotocol string
 		saslmechanism    string
 		saslusername     string
@@ -37,8 +37,7 @@ func NewKafkaConfigMap(connectionString string,
 	securityprotocol string,
 	saslmechanism string,
 	saslusername string,
-	saslpassword string,
-	monitoring *Monitoring) *GoKafka {
+	saslpassword string) *GoKafka {
 	return &GoKafka{
 		server:           connectionString,
 		groupId:          groupId,
@@ -46,12 +45,7 @@ func NewKafkaConfigMap(connectionString string,
 		saslmechanism:    saslmechanism,
 		saslusername:     saslusername,
 		saslpassword:     saslpassword,
-		monitoring:       monitoring,
 	}
-}
-
-func (k *GoKafka) newMonitor(nrapp GfAgentTelemetry) {
-	k.nrapp = nrapp
 }
 
 func wait_until(fn func() bool) {
@@ -89,50 +83,35 @@ type (
 )
 
 func (k *GoKafka) worker(id int, messages <-chan *kafka.Message, consumer *kafka.Consumer, fn ConsumerFunc, kc *kafka.ConfigMap, kcs *KafkaConsumerSettings, done chan<- struct{}) {
+	tracer := otel.Tracer("")
+
 	for msg := range messages {
-		log.Printf("[Worker %d] Processando mensagem: %s", id, string(msg.Value))
 		func(cmsg *kafka.Message,
 			cconsumer *kafka.Consumer,
 			ckc *kafka.ConfigMap,
 			ckcs KafkaConsumerSettings,
-			nrapp GfAgentTelemetry,
 			cfn ConsumerFunc) {
 			defer recover_all()
 			defer cconsumer.CommitMessage(cmsg)
-			ctx := context.Background()
-			transaction := &GfSpan{}
-			if nrapp != nil {
-				ctx, transaction = k.nrapp.StartTransaction(ctx, "kafka/consumer")
-			}
-			correlation := uuid.New()
-			for _, v := range msg.Headers {
-				if v.Key == XCORRELATIONID && len(v.Value) > 0 {
-					if id, err := uuid.Parse(string(v.Value)); err == nil {
-						correlation = id
-					}
-				}
-			}
-			tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
-			kafkaCallFnWithResilence(ctx, tm, cmsg, ckc, ckcs, cfn)
-			tm.AddStack(100, "COMMITING MSG")
+
+			carrier := kafkaHeaderCarrier{&msg.Headers}
+			ctx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+			ctx, span := tracer.Start(ctx, fmt.Sprintf("KAFKA SUB %s", kcs.Topic),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", kcs.Topic)),
+			)
+			kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
+			_, span2 := tracer.Start(ctx, "KAFKA COMMIT",
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", kcs.Topic)),
+				trace.WithAttributes(attribute.String("messaging.message.id", string(msg.Key))),
+			)
 			consumer.CommitMessage(msg)
-			tm.AddStack(100, "COMMIT SUCCESSFULLY")
-
-			content := &map[string]interface{}{}
-			if err := json.Unmarshal(msg.Value, content); err == nil {
-				tm.AddContent(content)
-			} else {
-				tm.AddContent(msg.Value)
-			}
-
-			tm.End()
-
-			if nrapp != nil {
-				transaction.End()
-			}
+			span2.End()
+			span.End()
 			<-messages
 
-		}(msg, consumer, kc, *kcs, k.nrapp, fn)
+		}(msg, consumer, kc, *kcs, fn)
 	}
 	done <- struct{}{}
 }
@@ -207,6 +186,8 @@ func (k *GoKafka) ConsumerMultiRoutine(
 	fn ConsumerFunc,
 	cfg ConsumerMultiRoutineSettings) {
 	go func(topic string) {
+		tracer := otel.Tracer("")
+
 		kcs := &KafkaConsumerSettings{
 			Topic:           topic,
 			AutoOffsetReset: cfg.AutoOffsetReset,
@@ -262,45 +243,28 @@ func (k *GoKafka) ConsumerMultiRoutine(
 				cconsumer *kafka.Consumer,
 				ckc *kafka.ConfigMap,
 				ckcs KafkaConsumerSettings,
-				nrapp GfAgentTelemetry,
 				cfn ConsumerFunc) {
 				defer recover_all()
 				defer cconsumer.CommitMessage(cmsg)
 				defer func() {
 					*ptr_r--
 				}()
-				ctx := context.Background()
-				transaction := &GfSpan{}
-				if nrapp != nil {
-					ctx, transaction = k.nrapp.StartTransaction(ctx, "kafka/consumer")
-				}
-				correlation := uuid.New()
-				for _, v := range msg.Headers {
-					if v.Key == XCORRELATIONID && len(v.Value) > 0 {
-						if id, err := uuid.Parse(string(v.Value)); err == nil {
-							correlation = id
-						}
-					}
-				}
-				tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
-				kafkaCallFnWithResilence(ctx, tm, cmsg, ckc, ckcs, cfn)
-				tm.AddStack(100, "COMMITING MSG")
+				carrier := kafkaHeaderCarrier{&msg.Headers}
+				ctx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+				ctx, span := tracer.Start(ctx, fmt.Sprintf("KAFKA SUB %s", topic),
+					trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+					trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+				)
+				kafkaCallFnWithResilence(ctx, cmsg, ckc, ckcs, cfn)
+				_, span2 := tracer.Start(ctx, "KAFKA COMMIT",
+					trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+					trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+					trace.WithAttributes(attribute.String("messaging.message.id", string(msg.Key))),
+				)
 				consumer.CommitMessage(msg)
-				tm.AddStack(100, "COMMIT SUCCESSFULLY")
-
-				content := &map[string]interface{}{}
-				if err := json.Unmarshal(msg.Value, content); err == nil {
-					tm.AddContent(content)
-				} else {
-					tm.AddContent(msg.Value)
-				}
-
-				tm.End()
-
-				if nrapp != nil {
-					transaction.End()
-				}
-			}(msg, consumer, kc, *kcs, k.nrapp, fn)
+				span2.End()
+				span.End()
+			}(msg, consumer, kc, *kcs, fn)
 			wait_until(func() bool {
 				return *ptr_r >= cfg.Routines
 			})
@@ -310,6 +274,7 @@ func (k *GoKafka) ConsumerMultiRoutine(
 
 func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 	go func(topic string) {
+		tracer := otel.Tracer("")
 
 		kcs := &KafkaConsumerSettings{
 			Topic:           topic,
@@ -359,46 +324,27 @@ func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 
 		for {
 			msg, err := consumer.ReadMessage(-1)
-
-			ctx := context.Background()
-			transaction := &GfSpan{}
-			if k.nrapp != nil {
-				ctx, transaction = k.nrapp.StartTransaction(ctx, "kafka/consumer")
-			}
-
 			if err != nil {
 				log.Println(err.Error())
 				continue
 			}
 
-			correlation := uuid.New()
-			for _, v := range msg.Headers {
-				if v.Key == XCORRELATIONID && len(v.Value) > 0 {
-					if id, err := uuid.Parse(string(v.Value)); err == nil {
-						correlation = id
-					}
-					break
-				}
-			}
+			carrier := kafkaHeaderCarrier{&msg.Headers}
+			ctx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+			ctx, span := tracer.Start(ctx, fmt.Sprintf("KAFKA SUB %s", topic),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+			)
+			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
 
-			tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
-			kafkaCallFnWithResilence(ctx, tm, msg, kc, *kcs, fn)
-			tm.AddStack(100, "COMMITING MSG")
+			_, span2 := tracer.Start(ctx, "KAFKA COMMIT",
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+				trace.WithAttributes(attribute.String("messaging.message.id", string(msg.Key))),
+			)
 			consumer.CommitMessage(msg)
-			tm.AddStack(100, "COMMIT SUCCESSFULLY")
-
-			content := &map[string]interface{}{}
-			if err := json.Unmarshal(msg.Value, content); err == nil {
-				tm.AddContent(content)
-			} else {
-				tm.AddContent(msg.Value)
-			}
-
-			tm.End()
-
-			if k.nrapp != nil {
-				transaction.End()
-			}
+			span2.End()
+			span.End()
 		}
 
 	}(topic)
@@ -406,6 +352,7 @@ func (k *GoKafka) Consumer(topic string, fn ConsumerFunc) {
 
 func (k *GoKafka) ConsumerWithSettings(topic string, fn ConsumerFunc, cs ConsumerSettings) {
 	go func(topic string) {
+		tracer := otel.Tracer("")
 
 		kcs := &KafkaConsumerSettings{
 			Topic:           topic,
@@ -455,46 +402,27 @@ func (k *GoKafka) ConsumerWithSettings(topic string, fn ConsumerFunc, cs Consume
 
 		for {
 			msg, err := consumer.ReadMessage(-1)
-
-			ctx := context.Background()
-			transaction := &GfSpan{}
-			if k.nrapp != nil {
-				ctx, transaction = k.nrapp.StartTransaction(ctx, "kafka/consumer")
-			}
-
 			if err != nil {
 				log.Println(err.Error())
 				continue
 			}
 
-			correlation := uuid.New()
-			for _, v := range msg.Headers {
-				if v.Key == XCORRELATIONID && len(v.Value) > 0 {
-					if id, err := uuid.Parse(string(v.Value)); err == nil {
-						correlation = id
-					}
-					break
-				}
-			}
+			carrier := kafkaHeaderCarrier{&msg.Headers}
+			ctx := propagation.TraceContext{}.Extract(context.Background(), carrier)
+			ctx, span := tracer.Start(ctx, fmt.Sprintf("KAFKA SUB %s", topic),
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+			)
 
-			tm := k.monitoring.Start(correlation, k.groupId, TracingTypeConsumer)
-			kafkaCallFnWithResilence(ctx, tm, msg, kc, *kcs, fn)
-			tm.AddStack(100, "COMMITING MSG")
+			kafkaCallFnWithResilence(ctx, msg, kc, *kcs, fn)
+			_, span2 := tracer.Start(ctx, "KAFKA COMMIT",
+				trace.WithAttributes(attribute.String("messaging.system", "kafka")),
+				trace.WithAttributes(attribute.String("messaging.destination.name", topic)),
+				trace.WithAttributes(attribute.String("messaging.message.id", string(msg.Key))),
+			)
 			consumer.CommitMessage(msg)
-			tm.AddStack(100, "COMMIT SUCCESSFULLY")
-
-			content := &map[string]interface{}{}
-			if err := json.Unmarshal(msg.Value, content); err == nil {
-				tm.AddContent(content)
-			} else {
-				tm.AddContent(msg.Value)
-			}
-
-			tm.End()
-
-			if k.nrapp != nil {
-				transaction.End()
-			}
+			span2.End()
+			span.End()
 		}
 
 	}(topic)

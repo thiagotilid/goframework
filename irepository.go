@@ -40,7 +40,7 @@ type IRepository[T interface{}] interface {
 	DeleteManyForce(ctx context.Context,
 		filter map[string]interface{}) error
 	Aggregate(ctx context.Context,
-		pipeline []interface{}) (*mongo.Cursor, error)
+		pipeline bson.A) (*mongo.Cursor, error)
 	DefaultAggregate(ctx context.Context,
 		filter bson.A) (*mongo.Cursor, error)
 	Count(ctx context.Context,
@@ -54,7 +54,15 @@ type IRepository[T interface{}] interface {
 		ctx context.Context,
 		filter map[string]interface{},
 		fields interface{}) error
+	Push(
+		ctx context.Context,
+		filter map[string]interface{},
+		fields interface{}) error
 	PushMany(
+		ctx context.Context,
+		filter map[string]interface{},
+		fields interface{}) error
+	Pull(
 		ctx context.Context,
 		filter map[string]interface{},
 		fields interface{}) error
@@ -62,7 +70,6 @@ type IRepository[T interface{}] interface {
 		ctx context.Context,
 		filter map[string]interface{},
 		fields interface{}) error
-	SetExpiredAfterInsert(ctx context.Context, seconds int32) error
 	FindOneAndUpdate(
 		ctx context.Context,
 		filter map[string]interface{},

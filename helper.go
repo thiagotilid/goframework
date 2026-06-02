@@ -9,7 +9,8 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt"
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/bsonrw"
@@ -22,6 +23,8 @@ const (
 	XAUTHORID      string = "X-Author-Id"
 	XCORRELATIONID string = "X-Correlation-Id"
 	XCREATEDAT     string = "X-CreatedAt"
+
+	B2B2C string = "assistancecompanies"
 )
 
 func helperContext(c context.Context, filter map[string]interface{}, addfilter map[string]string) {
@@ -38,7 +41,6 @@ func helperContext(c context.Context, filter map[string]interface{}, addfilter m
 			for _, kh := range c.Msg.Headers {
 				if kh.Key == v {
 					filter[k] = string(kh.Value)
-					break
 				}
 			}
 		}
@@ -47,7 +49,6 @@ func helperContext(c context.Context, filter map[string]interface{}, addfilter m
 			value := fmt.Sprint(c.Value(v))
 			if value != "" {
 				filter[k] = value
-				break
 			}
 		}
 	}
@@ -77,7 +78,6 @@ func GetContextHeader(c context.Context, keys ...string) string {
 }
 
 func getContext(c context.Context) context.Context {
-
 	switch c := c.(type) {
 	case *gin.Context:
 		return c.Request.Context()
@@ -96,6 +96,14 @@ func (kh *kHeader) ToKafkaHeader() []kafka.Header {
 		header = append(header, kafka.Header{Key: k, Value: []byte(v)})
 	}
 	return header
+}
+
+func (kh *kHeader) ToMapStringSlice() map[string][]string {
+	result := make(map[string][]string)
+	for k, v := range kh.keys {
+		result[k] = []string{v}
+	}
+	return result
 }
 
 func (kh *kHeader) GetString(key string) string {
@@ -174,13 +182,15 @@ func helperContextKafka(c context.Context, addfilter []string) *kHeader {
 func ToContext(c context.Context) context.Context {
 	listContext := []string{XTENANTID, XAUTHOR, XAUTHORID, XCORRELATIONID, TTENANTID, XCREATEDAT}
 
-	cc := context.Background()
+	cc := c
 	switch c := c.(type) {
 	case *gin.Context:
+		cc = c.Request.Context()
 		for _, v := range listContext {
 			cc = context.WithValue(cc, v, c.Request.Header.Get(v))
 		}
 	case *ConsumerContext:
+		cc = c.Context
 		for _, v := range listContext {
 			for _, kh := range c.Msg.Headers {
 				if kh.Key == v {
@@ -197,6 +207,17 @@ func ToContext(c context.Context) context.Context {
 	return cc
 }
 
+func AddToContext(c context.Context, key string, value string) {
+	switch c := c.(type) {
+	case *gin.Context:
+		c.Request.Header.Add(key, value)
+	case *ConsumerContext:
+		c.Msg.Headers = append(c.Msg.Headers, kafka.Header{Key: key, Value: []byte(value)})
+	default:
+		c = context.WithValue(c, key, value)
+	}
+}
+
 func GetTenantByToken(ctx *gin.Context) (uuid.UUID, error) {
 	tokenString := ctx.GetHeader("Authorization")
 
@@ -209,16 +230,16 @@ func GetTenantByToken(ctx *gin.Context) (uuid.UUID, error) {
 	if claims, ok := token.Claims.(jwt.MapClaims); ok {
 		tenant := fmt.Sprint(claims[TTENANTID])
 		if tenant == "" {
-			return uuid.Nil, fmt.Errorf("Tenant not found")
+			return uuid.Nil, fmt.Errorf("tenant not found")
 		}
 		id, err := uuid.Parse(tenant)
 		if err != nil {
-			return uuid.Nil, fmt.Errorf("Tenant not found")
+			return uuid.Nil, fmt.Errorf("tenant not found")
 		}
 
 		return id, nil
 	} else {
-		return uuid.Nil, fmt.Errorf("Tenant not found")
+		return uuid.Nil, fmt.Errorf("tenant not found")
 	}
 }
 

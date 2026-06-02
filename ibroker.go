@@ -18,9 +18,10 @@ type (
 	Consumer interface {
 		HandleFn()
 	}
-	Producer[T interface{}] interface {
-		Publish(ctx context.Context, msgs ...*T) error
-		PublishWithKey(ctx context.Context, key []byte, msgs ...*T) error
+
+	Producer interface {
+		Publish(ctx context.Context, tp string, msg any) error
+		PublishWithKey(ctx context.Context, tp string, key []byte, msg any) error
 	}
 )
 
