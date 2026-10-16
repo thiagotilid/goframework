@@ -84,7 +84,7 @@ func kafkaCallFnWithResilence(
 			kafkaCallFnWithResilence(ctx, msg, kcm, kcs, fn)
 			return
 		}
-		kafkaSendToDlq(cctx, kcm, msg, err, debug.Stack())
+		sendToDlq(cctx, kcm, msg, err, debug.Stack())
 	})
 	fn(cctx)
 }

@@ -2,11 +2,15 @@ package goframework
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -32,6 +36,7 @@ type GoFramework struct {
 	healthCheck   []func() (string, bool)
 	mainCtx       context.Context
 	otelShutdown  func(context.Context) error
+	lc            *lifecycle
 }
 
 type GoFrameworkOptions interface {
@@ -95,7 +100,11 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		panic(err)
 	}
 
-	time.Local = location
+	// Skip the write when already UTC: it avoids a needless data race on this global when
+	// several frameworks are built in one process (tests).
+	if time.Local != location {
+		time.Local = location
+	}
 
 	gf := &GoFramework{
 		ioc:           dig.New(),
@@ -103,6 +112,7 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		server:        gin.Default(),
 		healthCheck:   make([]func() (string, bool), 0),
 		mainCtx:       context.Background(),
+		lc:            newLifecycle(),
 	}
 
 	cconfig := cors.DefaultConfig()
@@ -136,17 +146,24 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 
 	gf.server.Use(otelgin.Middleware(serviceName))
 
+	// /health keeps the behavior it always had, including while the pod is shutting down.
 	gf.server.GET("/health", func(ctx *gin.Context) {
+		list, httpCode := gf.runHealthChecks()
+		ctx.JSON(httpCode, list)
+	})
 
-		list := make(map[string]bool)
-		httpCode := http.StatusOK
-		for _, item := range gf.healthCheck {
-			name, status := item()
-			list[name] = status
-			if !status {
-				httpCode = http.StatusServiceUnavailable
-			}
+	// /health/live never depends on external services, so it can back a liveness probe.
+	gf.server.GET(healthLivePath, func(ctx *gin.Context) {
+		ctx.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	// /health/ready answers 503 as soon as the shutdown begins, taking the pod out of rotation.
+	gf.server.GET(healthReadyPath, func(ctx *gin.Context) {
+		if gf.lc.isShuttingDown() {
+			ctx.JSON(http.StatusServiceUnavailable, map[string]string{"status": "shutting_down"})
+			return
 		}
+		list, httpCode := gf.runHealthChecks()
 		ctx.JSON(httpCode, list)
 	})
 
@@ -164,8 +181,17 @@ func initializeViper() *viper.Viper {
 	v.AddConfigPath("./configs")
 	v.SetConfigType("json")
 	v.SetConfigName(os.Getenv("env"))
+
+	// Environment variables take precedence over the config file.
+	// Key "redis.hosts" is read from REDIS_HOSTS, "kafka.groupid" from KAFKA_GROUPID.
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
 	if err := v.ReadInConfig(); err != nil {
-		log.Panic(err)
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
+			log.Panic(err)
+		}
 	}
 	return v
 }
@@ -197,6 +223,37 @@ func (gf *GoFramework) RegisterController(controller interface{}) {
 	}
 }
 
+const (
+	healthLivePath  = "/health/live"
+	healthReadyPath = "/health/ready"
+)
+
+// isFrameworkOnlyRoute reports routes the framework adds for the platform itself. They are
+// not part of the service API, so they are not registered in the routes collection.
+func isFrameworkOnlyRoute(path string) bool {
+	return path == healthLivePath || path == healthReadyPath
+}
+
+func (gf *GoFramework) runHealthChecks() (map[string]bool, int) {
+	list := make(map[string]bool)
+	httpCode := http.StatusOK
+	for _, item := range gf.healthCheck {
+		name, status := item()
+		list[name] = status
+		if !status {
+			httpCode = http.StatusServiceUnavailable
+		}
+	}
+	return list, httpCode
+}
+
+// Start serves HTTP until the process receives SIGTERM or SIGINT, then shuts down
+// gracefully: readiness turns unhealthy, the Kafka consumers stop reading, and in-flight
+// requests and messages are given up to SHUTDOWN_TIMEOUT_SECONDS (default 20) to finish.
+// SHUTDOWN_DELAY_SECONDS (default 0) optionally holds the listener open at the start of
+// that window, for deployments without a preStop hook. The delay is part of the timeout.
+//
+// It returns nil on a clean shutdown, and the listen error if the server fails to run.
 func (gf *GoFramework) Start() error {
 	port := os.Getenv("port")
 	if port == "" {
@@ -209,15 +266,77 @@ func (gf *GoFramework) Start() error {
 		}
 	}
 
-	err := gf.server.Run(":" + port)
+	ctx, stop := signal.NotifyContext(gf.mainCtx, syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	srv := &http.Server{Addr: ":" + port, Handler: gf.server.Handler()}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ListenAndServe() }()
+
+	var err error
+	select {
+	case err = <-serveErr:
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		gf.drain(nil)
+	case <-ctx.Done():
+		// A second signal now terminates the process immediately.
+		stop()
+		log.Println("goframework: shutdown signal received, draining")
+		gf.drain(srv)
+	}
 
 	if gf.otelShutdown != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), otelFlushTimeout)
 		defer cancel()
 		gf.otelShutdown(shutdownCtx)
 	}
 
 	return err
+}
+
+// drain stops the consumers and, when srv is not nil, the HTTP server, within the shutdown
+// timeout. It never fails: when time runs out it logs and returns.
+func (gf *GoFramework) drain(srv *http.Server) {
+	timeout := time.Duration(gf.configuration.GetInt("shutdown_timeout_seconds")) * time.Second
+	if timeout <= 0 {
+		timeout = defaultShutdownTimeout
+	}
+	delay := time.Duration(gf.configuration.GetInt("shutdown_delay_seconds")) * time.Second
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	gf.lc.begin()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !gf.lc.wait(drainCtx) {
+			log.Println("goframework: timed out waiting for Kafka consumers to finish")
+		}
+	}()
+
+	if srv != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if delay > 0 {
+				select {
+				case <-time.After(delay):
+				case <-drainCtx.Done():
+				}
+			}
+			if err := srv.Shutdown(drainCtx); err != nil {
+				log.Printf("goframework: timed out waiting for HTTP requests to finish: %v", err)
+				srv.Close()
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 func (gf *GoFramework) Invoke(function interface{}) {
@@ -320,6 +439,7 @@ func (gf *GoFramework) RegisterKafka(server string,
 	saslpassword string) {
 	err := gf.ioc.Provide(func() *GoKafka {
 		kc := NewKafkaConfigMap(server, groupId, securityprotocol, saslmechanism, saslusername, saslpassword)
+		kc.lc = gf.lc
 		return kc
 	})
 	if err != nil {
@@ -353,6 +473,9 @@ func (gf *GoFramework) RegisterRoutes(db *mongo.Database) {
 		coll.DeleteMany(context.Background(), map[string]interface{}{"module": mod})
 
 		for _, r := range gf.server.Routes() {
+			if isFrameworkOnlyRoute(r.Path) {
+				continue
+			}
 			data := NewRoute(r, mod)
 
 			bsonMap, err := MarshalWithRegistry(data)
