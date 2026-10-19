@@ -2,6 +2,8 @@ package goframework
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -12,28 +14,29 @@ import (
 // Compile-time guard for the public API the services rely on. If a signature here changes,
 // services stop compiling when they bump the version, which the release must not do.
 var (
-	_ func(...GoFrameworkOptions) *GoFramework                           = NewGoFramework
-	_ func(*GoFramework) error                                           = (*GoFramework).Start
-	_ func(*GoFramework, string) string                                  = (*GoFramework).GetConfig
-	_ func(*GoFramework, interface{})                                    = (*GoFramework).Invoke
-	_ func(*GoFramework, interface{})                                    = (*GoFramework).RegisterController
-	_ func(*GoFramework, interface{})                                    = (*GoFramework).RegisterApplication
-	_ func(*GoFramework, interface{})                                    = (*GoFramework).RegisterRepository
-	_ func(*GoFramework, interface{})                                    = (*GoFramework).RegisterKafkaConsumer
-	_ func(*GoFramework, interface{})                                    = (*GoFramework).RegisterKafkaProducer
-	_ func(*GoFramework, interface{})                                    = (*GoFramework).RegisterProducer
-	_ func(*GoFramework, interface{})                                    = (*GoFramework).RegisterCache
-	_ func(*GoFramework)                                                 = (*GoFramework).RegisterRedis
-	_ func(*GoKafka, string, ConsumerFunc)                               = (*GoKafka).Consumer
-	_ func(*GoKafka, string, ConsumerFunc, ConsumerSettings)             = (*GoKafka).ConsumerWithSettings
-	_ func(*GoKafka, string, ConsumerFunc, ConsumerMultiRoutineSettings) = (*GoKafka).ConsumerMultiRoutine
-	_ func(*GoKafka, string, ConsumerFunc, ConsumerMultiRoutineSettings) = (*GoKafka).ConsumerWithWorker
-	_ func(string, string, string, string, string, string) *GoKafka      = NewKafkaConfigMap
-	_ func(*GoKafka) Producer                                            = NewKafkaProducer
-	_ func(*viper.Viper) gin.HandlerFunc                                 = AddTenant
-	_ func(context.Context) context.Context                              = ToContext
-	_ func(context.Context, string, string)                              = AddToContext
-	_ func(context.Context, ...string) string                            = GetContextHeader
+	_ func(...GoFrameworkOptions) *GoFramework                                                       = NewGoFramework
+	_ func(*GoFramework) error                                                                       = (*GoFramework).Start
+	_ func(*GoFramework, string) string                                                              = (*GoFramework).GetConfig
+	_ func(*GoFramework, interface{})                                                                = (*GoFramework).Invoke
+	_ func(*GoFramework, interface{})                                                                = (*GoFramework).RegisterController
+	_ func(*GoFramework, interface{})                                                                = (*GoFramework).RegisterApplication
+	_ func(*GoFramework, interface{})                                                                = (*GoFramework).RegisterRepository
+	_ func(*GoFramework, interface{})                                                                = (*GoFramework).RegisterKafkaConsumer
+	_ func(*GoFramework, interface{})                                                                = (*GoFramework).RegisterKafkaProducer
+	_ func(*GoFramework, interface{})                                                                = (*GoFramework).RegisterProducer
+	_ func(*GoFramework, interface{})                                                                = (*GoFramework).RegisterCache
+	_ func(*GoFramework)                                                                             = (*GoFramework).RegisterRedis
+	_ func(*GoKafka, string, ConsumerFunc)                                                           = (*GoKafka).Consumer
+	_ func(*GoKafka, string, ConsumerFunc, ConsumerSettings)                                         = (*GoKafka).ConsumerWithSettings
+	_ func(*GoKafka, string, ConsumerFunc, ConsumerMultiRoutineSettings)                             = (*GoKafka).ConsumerMultiRoutine
+	_ func(*GoKafka, string, ConsumerFunc, ConsumerMultiRoutineSettings)                             = (*GoKafka).ConsumerWithWorker
+	_ func(string, string, string, string, string, string) *GoKafka                                  = NewKafkaConfigMap
+	_ func(*GoKafka) Producer                                                                        = NewKafkaProducer
+	_ func(*viper.Viper) gin.HandlerFunc                                                             = AddTenant
+	_ func(context.Context) context.Context                                                          = ToContext
+	_ func(context.Context, string, string)                                                          = AddToContext
+	_ func(context.Context, ...string) string                                                        = GetContextHeader
+	_ func(context.Context, string, string, io.Reader, ...map[string]string) (*http.Response, error) = RestRequest
 )
 
 // Wires a framework the way the services do (cmd/main.go): RegisterKafka, a consumer

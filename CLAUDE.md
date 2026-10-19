@@ -27,6 +27,27 @@ Invariantes: o handler HTTP continua recebendo o `*gin.Context` do mesmo engine 
 
 Origem: incidente de 2026-08-05 (proposta Notro 02720436: o rolling update matou o pod do `service` no meio do `ReceiveProposal`) e o documento `conectahub360/back/conectahub_docs/overview/deploy-graceful-shutdown.md`, que descreve a causa, o patch proposto e a configuração do Kubernetes.
 
+## Repasse do tenant em `RestRequest` (branch `feat/rest-context-forward`, não commitada)
+
+`RestRequest` em `httprequest.go` repassa `X-Tenant-Id`, `X-Author`, `X-Author-Id`, `X-Correlation-Id` e `X-CreatedAt` do contexto quando o destino é **interno**; externo nunca recebe. Antes, só os headers passados pelo chamador seguiam, e chamadas vindas de consumers Kafka ou de métodos que só repassavam o JWT chegavam ao destino com o tenant zerado, sem erro.
+- Regra de "interno" (fechada, sem heurística por número de rótulos): loopback e IPs privados; DNS do Kubernetes (`.svc`, `.svc.cluster.local`, `.cluster.local`); nomes curtos em que todo rótulo começa com `tilid-`; `*.apitilid.com.br`; mais `INTERNAL_HOSTS`. `REST_FORWARD_CONTEXT=false` desliga. Detalhes em `docs/rest-context-forwarding.md`.
+- O chamador vence: só preenche o que faltou (inclusive valor vazio). `Authorization` não é repassado.
+- Redirecionamento para host externo remove os headers repassados.
+- `*.conectahub360.com.br` (checklist, tracker) **não** é interno por padrão: o domínio mistura APIs e UIs. Quem quiser adiciona em `INTERNAL_HOSTS`.
+- Achado no destino: `AddTenant` dá precedência ao `X-Tenant-Id` recebido sobre o JWT (e não valida a assinatura). O gateway precisa descartar esse header vindo de fora; não verificado.
+- Validação: testes unitários (`httprequest_test.go`) e cenário `forward` na cópia do `service`: a v4.7.7 perde o tenant (HTTP e Kafka, UUID zero) e o código novo repassa; os 19 cenários anteriores continuam passando.
+
+## Dependências: decisão de NÃO atualizar agora (2026-10-19)
+
+Uma atualização foi feita em branch separada, validada e **descartada** a pedido do usuário. O `go.mod` continua com as versões da rc.1. Motivos e travas, para quando for retomada:
+- **Ganho pequeno:** `govulncheck` com as dependências novas: 50 → 47 vulnerabilidades alcançadas (só 3 corrigidas). O grosso (biblioteca padrão do Go) se resolve trocando a imagem de build `golang:1.25.0` por **`golang:1.25.14`**, o que derruba para 16 sem mexer em código nem em `go.mod`. Esse é o ganho real e está pendente nos Dockerfiles dos serviços.
+- **Custo de adoção alto:** o `go.mod` de um serviço mudaria em dezenas de linhas (quase todas `// indirect`), e a adoção passaria a ser `go get ...@<versão>` + `go mod tidy`.
+- **`go 1.25.0` não pode subir.** Os serviços compilam com `golang:1.25.0`. As versões mais novas de otel (1.45+), `go-redis` 9.23, `gin-contrib/cors` 1.7.9 e `golang.org/x/*` exigem Go 1.26.
+- **`go.opentelemetry.io/otel/log` não pode passar de v0.20.x.** A partir da v0.21 `log.String` foi removida e os serviços importam esse pacote diretamente (60 imports). Quebrou a compilação do `service` na tentativa.
+- **`confluent-kafka-go` fica em v1.9.2** e **`mongo-driver` no v1**: as versões v2 têm outro import path e seus tipos (`kafka.Message`, `kafka.Header`, `*mongo.Database`) estão na API pública.
+- Limite seguro encontrado (testado contra a cópia do `service`): otel 1.44.0 (logs 0.20.0, contrib 0.69.0, otelslog 0.19.0), `go-redis` 9.22.0, `cors` 1.7.8, `mongo-driver` 1.17.10. Passou em `go test -race`, nos 19 cenários e no receptor OTLP local (`teste/otel_probe.py`).
+- Migração futura para Go 1.26 e otel mais novo: trabalho separado (alguns serviços como `mcp`, `rotation` e `notrosync` já compilam com 1.26).
+
 ## Onde estão os serviços (atenção)
 
 **Somente leitura: não alterar nada em `conectahub360/back`.** Qualquer teste com um serviço usa uma cópia dentro deste repositório (`teste/`, ignorada pelo git, porque os configs têm segredos).

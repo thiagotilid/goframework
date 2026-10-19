@@ -115,6 +115,8 @@ func NewGoFramework(opts ...GoFrameworkOptions) *GoFramework {
 		lc:            newLifecycle(),
 	}
 
+	configureRest(gf.configuration)
+
 	cconfig := cors.DefaultConfig()
 	cconfig.AllowAllOrigins = true
 	cconfig.AllowHeaders = []string{"*", "Authorization"}
